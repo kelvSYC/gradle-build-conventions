@@ -39,7 +39,7 @@ foojay-resolver-plugin = "org.gradle.toolchains.foojay-resolver:org.gradle.toolc
 kotest-plugin = "io.kotest:io.kotest.gradle.plugin:6.2.6"
 ksp-plugin = { module = "com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin", version.ref = "ksp" }
 gradlex-dependency-conflict-resolution-plugin = "org.gradlex:jvm-dependency-conflict-resolution:2.1.2"
-gradlex-reproducible-builds-plugin = "org.gradlex:reproducible-builds:1.0"
+gradlex-reproducible-builds-plugin = "org.gradlex:reproducible-builds:1.1"
 kotlin-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin" } # version from BOM 'kotlin-gradle-plugins-bom'
 
 # API Dependencies
