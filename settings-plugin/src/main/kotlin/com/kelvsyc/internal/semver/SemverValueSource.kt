@@ -78,7 +78,9 @@ abstract class SemverValueSource : ValueSource<String, SemverValueSource.Params>
     )
 }
 
-private data class SemVer(val major: Int, val minor: Int, val patch: Int) {
+private data class SemVer(val major: Int, val minor: Int, val patch: Int) : Comparable<SemVer> {
+    override fun compareTo(other: SemVer) = compareValuesBy(this, other, SemVer::major, SemVer::minor, SemVer::patch)
+
     override fun toString() = "$major.$minor.$patch"
 }
 
@@ -132,8 +134,7 @@ private fun findLatestSemVer(repo: Repository, tagPrefix: String): TaggedVersion
         walk.markStart(walk.parseCommit(head))
         var result: TaggedVersion? = null
         for (commit in walk) {
-            val tagName = tagMap[commit.id] ?: continue
-            val semver = parseSemVer(tagName.removePrefix(tagPrefix)) ?: continue
+            val semver = tagMap[commit.id] ?: continue
             result = TaggedVersion(semver, commit.id == head)
             break
         }
@@ -143,12 +144,18 @@ private fun findLatestSemVer(repo: Repository, tagPrefix: String): TaggedVersion
     }
 }
 
-private fun buildTagMap(repo: Repository, tagPrefix: String): Map<ObjectId, String> {
-    val map = mutableMapOf<ObjectId, String>()
+/**
+ * Maps each commit carrying at least one clean `[tagPrefix]MAJOR.MINOR.PATCH` tag to the highest
+ * such version. Tags that do not parse are ignored, so a commit tagged both `v3.0.0` and
+ * `v3.0.0-rc1` maps to `3.0.0`.
+ */
+private fun buildTagMap(repo: Repository, tagPrefix: String): Map<ObjectId, SemVer> {
+    val map = mutableMapOf<ObjectId, SemVer>()
     for (ref in repo.refDatabase.getRefsByPrefix("refs/tags/$tagPrefix")) {
+        val semver = parseSemVer(ref.name.removePrefix("refs/tags/$tagPrefix")) ?: continue
         val peeled = repo.refDatabase.peel(ref)
         val id = peeled.peeledObjectId ?: ref.objectId
-        map[id] = ref.name.removePrefix("refs/tags/")
+        map.merge(id, semver, ::maxOf)
     }
     return map
 }

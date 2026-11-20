@@ -93,6 +93,32 @@ class SemverVersionTest {
     }
 
     @Test
+    fun preReleaseTagOnSameCommitDoesNotHideCleanTag() {
+        initRepo(tag = "v2.0.0").use { git ->
+            commitPastTag(git)
+            git.tag().setName("v3.0.0").setAnnotated(false).call()
+            git.tag().setName("v3.0.0-rc1").setAnnotated(false).call()
+        }
+        assertEquals("3.0.0", version())
+    }
+
+    @Test
+    fun highestCleanTagOnSameCommitWins() {
+        initRepo(tag = "v3.1.0").use { git ->
+            git.tag().setName("v3.0.0").setAnnotated(false).call()
+        }
+        assertEquals("3.1.0", version())
+    }
+
+    @Test
+    fun highestCleanTagOnSameCommitWinsByVersionNotName() {
+        initRepo(tag = "v9.0.0").use { git ->
+            git.tag().setName("v10.0.0").setAnnotated(false).call()
+        }
+        assertEquals("10.0.0", version())
+    }
+
+    @Test
     fun noTagIsNull() {
         Git.init().setDirectory(dir).call().use { git ->
             File(dir, "a.txt").writeText("a")
