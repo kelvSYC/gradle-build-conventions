@@ -32,6 +32,12 @@ The tag is pushed last so that a failed check or publish never leaves a remote t
 
 The labels must exist in the GitHub repository. They are read from the PR that produced the pushed commit (`gh api repos/{repo}/commits/{sha}/pulls`). Releases are serialized by `concurrency: release`.
 
+## Dependencies and Dependabot
+
+- Dependency repositories are declared only in the root `settings.gradle.kts` (`dependencyResolutionManagement`), with `RepositoriesMode.FAIL_ON_PROJECT_REPOS` so projects cannot add their own. Dependabot reads repositories from there (and from root `allprojects`/`subprojects` blocks), never from repositories a plugin adds; anything declared elsewhere makes its catalog lookups miss.
+- The catalog's `gradle` version is the Gradle version these conventions are built and tested with; consumers' wrappers follow it. The catalog's `kotlin` is the compiler Kotlin and must equal Gradle's embedded Kotlin. `checkToolchainVersions` (part of `check`) fails if `gradle` differs from this repository's wrapper or `kotlin` from the embedded Kotlin.
+- A Gradle upgrade is one change: the wrapper, the catalog's `gradle`, and the catalog's `kotlin` when the new Gradle embeds a different Kotlin. Dependabot ignores standalone Kotlin Gradle plugin bumps for that reason.
+
 ## Build Commands
 
 ```bash

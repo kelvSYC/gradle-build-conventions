@@ -8,10 +8,16 @@ plugins {
 }
 
 dependencyResolutionManagement {
-    versionCatalogs {
-        register("libs") {
-            from(files("catalog/libs.versions.toml"))
-        }
+    // Declared here, and only here, so Dependabot can see them: it reads repositories from settings'
+    // dependencyResolutionManagement but not from plugins, and projects must not declare their own.
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+    }
+
+    versionCatalogs.register("libs") {
+        from(files("catalog/libs.versions.toml"))
     }
 }
 

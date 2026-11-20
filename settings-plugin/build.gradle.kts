@@ -11,11 +11,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-repositories {
-    mavenCentral()
-    gradlePluginPortal()
-}
-
 dependencies {
     implementation(libs.jgit)
     implementation(libs.foojay.resolver.plugin)

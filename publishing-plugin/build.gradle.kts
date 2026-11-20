@@ -11,11 +11,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-repositories {
-    mavenCentral()
-    gradlePluginPortal()
-}
-
 dependencies {
     // Git remote parsing (GitHubRepository, parseGitHubRemote, readOriginUrl).
     implementation(project(":settings-plugin"))

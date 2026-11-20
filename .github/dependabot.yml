@@ -1,4 +1,5 @@
 version: 2
+# Dependabot takes this build's repositories from settings.gradle.kts (dependencyResolutionManagement); see AGENTS.md.
 updates:
   - package-ecosystem: gradle
     directory: /
