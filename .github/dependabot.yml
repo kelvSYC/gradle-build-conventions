@@ -10,6 +10,20 @@ updates:
       - dependency-name: "org.jetbrains.kotlin:kotlin-gradle-plugin"
       - dependency-name: "org.jetbrains.kotlin:kotlin-gradle-plugins-bom"
       - dependency-name: "org.jetbrains.kotlin.multiplatform"
+    # Every merge to main is a release that consumers then pick up, so routine updates arrive as one grouped PR
+    # (one release). Majors, pre-1.0 libraries (where a "minor" can break) and the Gradle wrapper (which must
+    # change together with the catalog's `gradle` version) get their own PRs. To split a surprise out of the
+    # group, comment `@dependabot ignore <dependency> minor version` on the grouped PR.
+    groups:
+      catalog-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - "gradle-wrapper"
+          - "org.jetbrains.kotlinx:kotlinx-datetime"
+          - "org.pkl-lang:*"
+          - "org.msgpack:*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
