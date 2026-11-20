@@ -83,6 +83,9 @@ jobs:
       # so `check publish` could start publishing before every check had passed.
       - name: Check
         run: ./gradlew --stacktrace check
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # HEAD is the tagged commit, so semver resolves the bare release version.
       - name: Publish
         run: ./gradlew --stacktrace publish
