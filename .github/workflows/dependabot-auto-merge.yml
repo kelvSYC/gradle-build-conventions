@@ -1,0 +1,32 @@
+name: Dependabot auto-merge
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+# Turns on GitHub auto-merge for Dependabot PRs other than major updates, so they merge once the required checks
+# (including the canary) pass, and each merge releases through release.yml. Auto-merge is enabled with the
+# CONVENTIONS_TOKEN personal access token: a merge made with GITHUB_TOKEN would trigger no workflows, so nothing
+# would be released. Workflows run for Dependabot see only Dependabot secrets, so the token is stored there.
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Enable auto-merge
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.CONVENTIONS_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::CONVENTIONS_TOKEN is not set in this repository's Dependabot secrets."
+            exit 1
+          fi
+          gh pr merge --auto --squash "$PR_URL"
