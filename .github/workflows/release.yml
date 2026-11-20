@@ -17,6 +17,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      # Labels of the merged pull request (gh api .../commits/{sha}/pulls).
+      pull-requests: read
 
     steps:
       - name: Checkout
@@ -40,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # A re-run after a failed publish finds the tag already pushed on this commit: reuse it.
+          # A release tag already on this commit (e.g. pushed by hand) is reused, never bumped past.
           existing=$(git tag --points-at "${{ github.sha }}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
           if [ -n "$existing" ]; then
             echo "Reusing ${existing}"
@@ -76,6 +78,11 @@ jobs:
           git tag -a "$next" -m "Release $next" "${{ github.sha }}"
           echo "tag=${next}" >> "$GITHUB_OUTPUT"
           echo "push=true" >> "$GITHUB_OUTPUT"
+      # A failing check stops the release before anything is published or the tag is pushed. A
+      # separate invocation: with the configuration cache, tasks of one invocation run in parallel,
+      # so `check publish` could start publishing before every check had passed.
+      - name: Check
+        run: ./gradlew --stacktrace check
       # HEAD is the tagged commit, so semver resolves the bare release version.
       - name: Publish
         run: ./gradlew --stacktrace publish
