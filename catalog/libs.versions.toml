@@ -4,6 +4,9 @@ dokkatoo = "2.4.0"
 # Transitively pulled in at older, vulnerable versions by org.jetbrains.dokka:dokka-core/dokka-base; pinned
 # here to the latest patched releases to close the corresponding Dependabot alerts.
 freemarker = "2.3.35"
+# The Gradle version these conventions are built and tested with; consumers' wrappers follow it. Must equal this
+# repository's wrapper version (checked by `checkToolchainVersions`).
+gradle = "9.9.2"
 jackson = "2.23.0"
 jsoup = "1.24.1"
 kotlin = "2.4.21"
