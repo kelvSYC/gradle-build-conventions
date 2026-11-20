@@ -1,0 +1,71 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/**'
+      - '**/*.md'
+      - 'docs/**'
+
+# Two merges must not race on the same tag.
+concurrency: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: tree:0
+      - name: Set up JDKs 21 and 25
+        uses: actions/setup-java@v6
+        with:
+          java-version: |
+            21
+            25
+          distribution: 'zulu'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Tag the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Latest release tag, by version order. Only vMAJOR.MINOR.PATCH counts.
+          latest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+
+          # Labels of the PR that produced this commit (the API returns [] for direct pushes).
+          labels=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[].labels[].name')
+
+          if [ -z "$latest" ]; then
+            next="v0.1.0"
+          else
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            if grep -qx 'release:major' <<< "$labels"; then
+              next="v$((major + 1)).0.0"
+            elif grep -qx 'release:minor' <<< "$labels"; then
+              next="v${major}.$((minor + 1)).0"
+            else
+              next="v${major}.${minor}.$((patch + 1))"
+            fi
+          fi
+
+          echo "Releasing ${next} (previous: ${latest:-none})"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next" -m "Release $next" "${{ github.sha }}"
+          git push origin "$next"
+      # HEAD is the tagged commit, so semver resolves the bare release version.
+      - name: Publish
+        run: ./gradlew --stacktrace publish
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
