@@ -3,10 +3,12 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
 
-# Turns on GitHub auto-merge for Dependabot PRs other than major updates, so they merge once the required checks
-# (including the canary) pass, and each merge releases through release.yml. Auto-merge is enabled with the
-# CONVENTIONS_TOKEN personal access token: a merge made with GITHUB_TOKEN would trigger no workflows, so nothing
-# would be released. Workflows run for Dependabot see only Dependabot secrets, so the token is stored there.
+# Turns on GitHub auto-merge for Dependabot's grouped catalog PR (the minor and patch updates that dependabot.yml
+# groups), so it merges once the required checks (including the canary) pass and releases through
+# release.yml. Everything else Dependabot opens (majors, pre-1.0 libraries, the Gradle wrapper, GitHub Actions) waits
+# for a person. Auto-merge is enabled with the CONVENTIONS_TOKEN personal access token: a merge made with GITHUB_TOKEN
+# would trigger no workflows, so nothing would be released. A run started by Dependabot sees only Dependabot secrets,
+# and one started by a person pushing to the PR only Actions secrets, so the token is stored in both.
 jobs:
   auto-merge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
@@ -20,13 +22,13 @@ jobs:
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
       - name: Enable auto-merge
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        if: steps.metadata.outputs.dependency-group == 'catalog-minor-and-patch'
         env:
           GH_TOKEN: ${{ secrets.CONVENTIONS_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::error::CONVENTIONS_TOKEN is not set in this repository's Dependabot secrets."
+            echo "::error::CONVENTIONS_TOKEN is not set in this repository's Dependabot and Actions secrets."
             exit 1
           fi
           gh pr merge --auto --squash "$PR_URL"
