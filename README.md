@@ -48,6 +48,29 @@ kelvsyc {
 | `com.kelvsyc.internal.semver` | `settings.gradle.kts` | Derives the project version from git tags |
 | `com.kelvsyc.internal.github-publishing` | `build.gradle.kts` | Publishes to GitHub Packages |
 
+## Keeping the pin up to date
+
+The settings plugin adds its repositories programmatically, and Dependabot cannot see repositories added by plugins. A consumer's `.github/dependabot.yml` therefore declares every GitHub Packages repository it resolves from as a registry, with a token that can read packages (a classic personal access token with `read:packages`; GitHub Packages does not accept fine-grained tokens), stored as the Dependabot secret `DEPENDABOT_PACKAGES_TOKEN`:
+
+```yaml
+registries:
+  gradle-build-conventions:
+    type: maven-repository
+    url: https://maven.pkg.github.com/kelvSYC/gradle-build-conventions
+    username: kelvSYC
+    password: ${{secrets.DEPENDABOT_PACKAGES_TOKEN}}
+  # …one entry per other GitHub Packages repository, e.g. kotlin-tools
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    registries:
+      - gradle-build-conventions
+    schedule:
+      interval: daily
+```
+
+Dependabot then proposes updates to the `com.kelvsyc.internal.settings` version in `settings.gradle.kts`. The secret name is the only coupling point: the token behind it can be replaced (rotated, or a different kind of credential) without touching the configuration.
+
 ## Releases
 
 Every push to `main` that touches more than `.github/`, `*.md` or `docs/` is released automatically: the latest `v*` tag is bumped by patch, or by minor/major when the merged pull request carries the label `release:minor` or `release:major`. The first release is `v0.1.0`. Both labels must exist in the repository before they can be applied to a pull request.
