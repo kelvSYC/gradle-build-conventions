@@ -7,6 +7,14 @@ plugins {
     id("com.kelvsyc.internal.semver")
 }
 
+dependencyResolutionManagement {
+    versionCatalogs {
+        register("libs") {
+            from(files("catalog/libs.versions.toml"))
+        }
+    }
+}
+
 rootProject.name = "gradle-build-conventions"
 
 include("catalog", "platform", "settings-plugin", "publishing-plugin")
