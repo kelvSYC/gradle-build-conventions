@@ -24,6 +24,7 @@ class SharedSettingsPluginTest {
         settingsBody: String = "",
         settingsPreamble: String = "",
         buildScript: String = "",
+        files: Map<String, String> = emptyMap(),
         tag: String? = null,
         origin: String? = null,
     ) {
@@ -62,6 +63,7 @@ class SharedSettingsPluginTest {
             """.trimMargin(),
         )
         File(dir, "build.gradle.kts").writeText(buildScript)
+        files.forEach { (path, content) -> File(dir, path).apply { parentFile.mkdirs() }.writeText(content) }
         File(dir, ".gitignore").writeText(".gradle/\n.kotlin/\nbuild/\n")
 
         Git.init().setDirectory(dir).setInitialBranch("main").call().use { git ->
@@ -109,6 +111,51 @@ class SharedSettingsPluginTest {
         )
         val result = build("help")
         assertTrue(result.output.contains("group=com.kelvsyc.rifflet\n"), result.output)
+    }
+
+    @Test
+    fun groupSetInBuildScriptIsKept() {
+        consumer(buildScript = "group = \"from.build.script\"\nprintln(\"group=\" + group)")
+        val result = build("help")
+        assertTrue(result.output.contains("group=from.build.script\n"), result.output)
+    }
+
+    @Test
+    fun groupSetInGradlePropertiesIsKept() {
+        consumer(
+            settingsBody = "include(\"sub\")",
+            files = mapOf(
+                "sub/gradle.properties" to "group=from.gradle.properties\n",
+                "sub/build.gradle.kts" to "println(\"sub-group=\" + group)",
+            ),
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("sub-group=from.gradle.properties\n"), result.output)
+    }
+
+    @Test
+    fun groupSetByParentSubprojectsBlockIsKept() {
+        consumer(
+            settingsBody = "include(\"sub\")",
+            buildScript = "subprojects { group = \"from.subprojects\" }",
+            files = mapOf("sub/build.gradle.kts" to "println(\"sub-group=\" + group)"),
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("sub-group=from.subprojects\n"), result.output)
+    }
+
+    @Test
+    fun subprojectGroupDefaultsToKelvsyc() {
+        consumer(
+            settingsBody = "include(\"sub\", \"sub:nested\")",
+            files = mapOf(
+                "sub/build.gradle.kts" to "println(\"sub-group=\" + group)",
+                "sub/nested/build.gradle.kts" to "println(\"nested-group=\" + group)",
+            ),
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("sub-group=com.kelvsyc\n"), result.output)
+        assertTrue(result.output.contains("nested-group=com.kelvsyc\n"), result.output)
     }
 
     @Test

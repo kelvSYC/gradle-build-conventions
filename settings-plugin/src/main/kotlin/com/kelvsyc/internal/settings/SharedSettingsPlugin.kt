@@ -2,6 +2,7 @@ package com.kelvsyc.internal.settings
 
 import com.kelvsyc.internal.semver.SemverSettingsPlugin
 import org.gradle.api.Plugin
+import org.gradle.api.Project
 import org.gradle.api.artifacts.dsl.RepositoryHandler
 import org.gradle.api.initialization.Settings
 import org.gradle.api.provider.Property
@@ -60,9 +61,23 @@ class SharedSettingsPlugin : Plugin<Settings> {
         }
 
         settings.gradle.beforeProject {
-            // Runs before the build script, so a project setting its own group still wins.
-            group = extension.group.get()
+            // By now the project's gradle.properties and any parent allprojects/subprojects block
+            // have been applied, so only replace Gradle's own default; the build script runs
+            // afterwards and can still set its own.
+            if (group.toString() == gradleDefaultGroup(this)) {
+                group = extension.group.get()
+            }
         }
+    }
+
+    /**
+     * The group Gradle assigns a project that never sets one: empty for the root project, else
+     * the root project's name followed by the parent's path segments, joined with `.`.
+     */
+    private fun gradleDefaultGroup(project: Project): String {
+        val parent = project.parent ?: return ""
+        val parentSegments = parent.path.removePrefix(":").split(':').filter { it.isNotEmpty() }
+        return (listOf(project.rootProject.name) + parentSegments).joinToString(".")
     }
 
     private fun RepositoryHandler.gitHubPackages(settings: Settings, repository: String, repositoryName: String) {
