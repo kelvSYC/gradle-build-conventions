@@ -3,13 +3,20 @@ version: 2
 updates:
   - package-ecosystem: gradle
     directory: /
+    # Weekly: each merge releases and becomes a bump in every consumer, so updates arrive as a weekly digest.
     schedule:
-      interval: daily
+      interval: weekly
     # The compiler Kotlin version follows Gradle's embedded Kotlin, so Dependabot must not bump it.
     ignore:
       - dependency-name: "org.jetbrains.kotlin:kotlin-gradle-plugin"
       - dependency-name: "org.jetbrains.kotlin:kotlin-gradle-plugins-bom"
       - dependency-name: "org.jetbrains.kotlin.multiplatform"
+      # The AWS SDKs publish patch releases almost daily (mostly new service APIs); take their minor updates only.
+      # A consumer that needs a newer patch can override the version locally.
+      - dependency-name: "software.amazon.awssdk:bom"
+        update-types: ["version-update:semver-patch"]
+      - dependency-name: "aws.sdk.kotlin:bom"
+        update-types: ["version-update:semver-patch"]
     # Every merge to main is a release that consumers then pick up, so routine updates arrive as one grouped PR
     # (one release). Majors, pre-1.0 libraries (where a "minor" can break) and the Gradle wrapper (which must
     # change together with the catalog's `gradle` version) get their own PRs. To split a surprise out of the
