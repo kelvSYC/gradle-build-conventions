@@ -35,3 +35,56 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Builds each consumer migrated to these conventions against this change, before it is released: the conventions
+  # are published to Maven Local and the consumer's pin is pointed at them (.github/scripts/canary.sh).
+  canary:
+    name: canary (${{ matrix.consumer.repository }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer:
+          - repository: kelvSYC/kotlin-tools
+            tasks: ":check"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: tree:0
+      # The consumer builds with JDK 25 and provisions its own test JDKs; 21 builds the plugin modules here.
+      - name: Set up JDKs 21 and 25
+        uses: actions/setup-java@v6
+        with:
+          java-version: |
+            21
+            25
+          distribution: 'zulu'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      # Before the consumer is checked out: an untracked consumer/ directory would make this version `+dirty`.
+      - name: Publish the conventions to Maven Local
+        id: conventions
+        run: |
+          ./gradlew --stacktrace publishToMavenLocal
+          version=$(./gradlew -q properties --property version | sed -n 's/^version: //p')
+          echo "Published ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # Full history: the consumer's version comes from its tags.
+      - name: Checkout the consumer
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ matrix.consumer.repository }}
+          path: consumer
+          fetch-depth: 0
+          filter: tree:0
+      - name: Build the consumer
+        run: .github/scripts/canary.sh consumer "${{ steps.conventions.outputs.version }}" ${{ matrix.consumer.tasks }} --stacktrace
