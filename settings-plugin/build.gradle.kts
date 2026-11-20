@@ -73,6 +73,7 @@ testing {
                         ":catalog:publishToMavenLocal",
                         ":platform:publishToMavenLocal",
                         ":settings-plugin:publishToMavenLocal",
+                        ":publishing-plugin:publishToMavenLocal",
                     )
                     systemProperty("conventions.version", project.version.toString())
                 }
