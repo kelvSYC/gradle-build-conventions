@@ -36,7 +36,7 @@ val checkToolchainVersions = tasks.register("checkToolchainVersions") {
     val catalogKotlin = libs.findVersion("kotlin").map { it.requiredVersion }.orElse("<missing>")
     val wrapperProperties = layout.projectDirectory.file("gradle/wrapper/gradle-wrapper.properties")
     val wrapperGradle = providers.fileContents(wrapperProperties).asText.map { text ->
-        Regex("""gradle-([0-9][^-/]*)-(?:bin|all)\.zip""").find(text)?.groupValues?.get(1) ?: "<unparseable>"
+        Regex("""/gradle-([^/]+)-(?:bin|all)\.zip""").find(text)?.groupValues?.get(1) ?: "<unparseable>"
     }
     val runningGradle = gradle.gradleVersion
     val embeddedKotlin = embeddedKotlinVersion
@@ -47,6 +47,10 @@ val checkToolchainVersions = tasks.register("checkToolchainVersions") {
 
     doLast {
         val wrapper = wrapperGradle.get()
+        // Consumers' wrappers follow the catalog's `gradle` version, so it must be a stable release.
+        check(Regex("""[0-9]+(\.[0-9]+)+""").matches(wrapper)) {
+            "The wrapper uses Gradle $wrapper, which is not a stable release; only stable Gradle releases are allowed."
+        }
         check(catalogGradle == wrapper) {
             "Catalog gradle = $catalogGradle but the wrapper uses Gradle $wrapper; update both together."
         }
