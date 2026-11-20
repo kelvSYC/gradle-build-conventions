@@ -24,7 +24,7 @@ plugins {
 }
 ```
 
-Publishing builds additionally apply the publishing convention in their `build.gradle.kts`. Leave out the version: the settings plugin resolves every versionless `com.kelvsyc.internal.*` plugin request at its own version, which keeps all shared plugins in step (they share classes, so mixing versions is unsupported):
+Publishing builds additionally apply the publishing convention in their `build.gradle.kts`. Leave out the version: the settings plugin resolves every versionless plugin request in exactly the `com.kelvsyc.internal` namespace at its own version, which keeps all shared plugins in step (they share classes, so mixing versions is unsupported). Plugins in a longer namespace, such as a build's own `com.kelvsyc.internal.kotlin-tools.*` conventions, are left alone:
 
 ```kotlin
 plugins {
@@ -32,7 +32,13 @@ plugins {
 }
 ```
 
-The settings plugin also registers the shared catalog as `libs`. The platform BOM is not wired in: builds that want it declare `platform("com.kelvsyc.internal:platform:<version>")` themselves (the shared Kotlin convention plugins will do this for them).
+The settings plugin also registers the shared catalog as `libs`, with the platform BOM at the same version added as `libs.conventions.platform`. The platform is not applied to any configuration: builds that want it declare it themselves (the shared Kotlin convention plugins will do this for them):
+
+```kotlin
+dependencies {
+    implementation(platform(libs.conventions.platform))
+}
+```
 
 Every project whose group is still Gradle's default gets the group `com.kelvsyc`; projects that set their own group (in `gradle.properties`, a build script or a parent's `allprojects`/`subprojects` block) keep it. Change the default in `settings.gradle.kts`:
 

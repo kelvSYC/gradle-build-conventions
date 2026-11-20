@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class SharedSettingsPluginTest {
 
@@ -17,51 +19,64 @@ class SharedSettingsPluginTest {
         ?: error("System property conventions.version is not set")
 
     /**
+     * A settings script applying the settings plugin at the version under test, resolving the
+     * artifacts under test from Maven Local only.
+     */
+    private fun settingsScript(
+        rootProjectName: String,
+        settingsBody: String = "",
+        settingsPreamble: String = "",
+        pluginManagementBody: String = "",
+    ) = """
+        |$settingsPreamble
+        |pluginManagement {
+        |    $pluginManagementBody
+        |    repositories {
+        |        exclusiveContent {
+        |            forRepository { mavenLocal() }
+        |            filter {
+        |                includeGroup("com.kelvsyc.internal")
+        |                includeGroup("com.kelvsyc.internal.settings")
+        |                includeGroup("com.kelvsyc.internal.semver")
+        |                includeGroup("com.kelvsyc.internal.github-publishing")
+        |            }
+        |        }
+        |        gradlePluginPortal()
+        |    }
+        |}
+        |
+        |plugins {
+        |    id("com.kelvsyc.internal.settings") version "$conventionsVersion"
+        |}
+        |
+        |dependencyResolutionManagement {
+        |    repositories {
+        |        exclusiveContent {
+        |            forRepository { mavenLocal() }
+        |            filter { includeGroup("com.kelvsyc.internal") }
+        |        }
+        |    }
+        |}
+        |
+        |rootProject.name = "$rootProjectName"
+        |$settingsBody
+    """.trimMargin()
+
+    /**
      * Writes a consumer build applying the settings plugin at the version under test, then
      * commits it to a fresh git repository (optionally tagged and with an `origin` remote).
      */
     private fun consumer(
         settingsBody: String = "",
         settingsPreamble: String = "",
+        pluginManagementBody: String = "",
         buildScript: String = "",
         files: Map<String, String> = emptyMap(),
         tag: String? = null,
         origin: String? = null,
     ) {
         File(dir, "settings.gradle.kts").writeText(
-            """
-            |$settingsPreamble
-            |pluginManagement {
-            |    repositories {
-            |        exclusiveContent {
-            |            forRepository { mavenLocal() }
-            |            filter {
-            |                includeGroup("com.kelvsyc.internal")
-            |                includeGroup("com.kelvsyc.internal.settings")
-            |                includeGroup("com.kelvsyc.internal.semver")
-            |                includeGroup("com.kelvsyc.internal.github-publishing")
-            |            }
-            |        }
-            |        gradlePluginPortal()
-            |    }
-            |}
-            |
-            |plugins {
-            |    id("com.kelvsyc.internal.settings") version "$conventionsVersion"
-            |}
-            |
-            |dependencyResolutionManagement {
-            |    repositories {
-            |        exclusiveContent {
-            |            forRepository { mavenLocal() }
-            |            filter { includeGroup("com.kelvsyc.internal") }
-            |        }
-            |    }
-            |}
-            |
-            |rootProject.name = "consumer"
-            |$settingsBody
-            """.trimMargin(),
+            settingsScript("consumer", settingsBody, settingsPreamble, pluginManagementBody),
         )
         File(dir, "build.gradle.kts").writeText(buildScript)
         files.forEach { (path, content) -> File(dir, path).apply { parentFile.mkdirs() }.writeText(content) }
@@ -109,6 +124,78 @@ class SharedSettingsPluginTest {
         )
         val result = build("help")
         assertTrue(result.output.contains("repositories=[GitHubPackages]"), result.output)
+    }
+
+    /**
+     * Plugins in a longer namespace, such as a build's own convention plugins, keep resolving
+     * from where the build declares them. The included build applies the settings plugin itself
+     * and one of its precompiled script plugins applies another versionless: given a version,
+     * that request would fail, as the plugin is already on the classpath.
+     */
+    @Test
+    fun localNamespacedPluginsAreNotForced() {
+        consumer(
+            pluginManagementBody = """includeBuild("local-plugins")""",
+            buildScript = """
+                plugins {
+                    id("com.kelvsyc.internal.example.local")
+                }
+            """.trimIndent(),
+            files = mapOf(
+                "local-plugins/settings.gradle.kts" to settingsScript("local-plugins"),
+                "local-plugins/build.gradle.kts" to "plugins {\n    `kotlin-dsl`\n}\n",
+                "local-plugins/src/main/kotlin/com.kelvsyc.internal.example.base.gradle.kts" to
+                    "println(\"base-plugin-applied\")\n",
+                "local-plugins/src/main/kotlin/com.kelvsyc.internal.example.local.gradle.kts" to """
+                    plugins {
+                        id("com.kelvsyc.internal.example.base")
+                    }
+
+                    println("local-plugin-applied")
+                """.trimIndent(),
+            ),
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("base-plugin-applied"), result.output)
+        assertTrue(result.output.contains("local-plugin-applied"), result.output)
+    }
+
+    /**
+     * A version a build declares for a plugin in a longer namespace, here in
+     * `pluginManagement.plugins`, is kept rather than replaced by the settings plugin's version.
+     */
+    @Test
+    fun localNamespacedPluginVersionsAreKept() {
+        val repository = File(dir, "repository")
+        publishPlugin(repository, "com.kelvsyc.internal.example.published", "1.0")
+        consumer(
+            pluginManagementBody = """
+                plugins {
+                    id("com.kelvsyc.internal.example.published") version "1.0"
+                }
+                repositories {
+                    maven("${repository.toURI()}")
+                }
+            """.trimIndent(),
+            buildScript = """
+                plugins {
+                    id("com.kelvsyc.internal.example.published")
+                }
+                println("base=" + plugins.hasPlugin("base"))
+            """.trimIndent(),
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("base=true\n"), result.output)
+    }
+
+    @Test
+    fun platformIsAvailableFromLibs() {
+        consumer(buildScript = """println("platform=" + libs.conventions.platform.get())""")
+        val result = build("help")
+        assertTrue(
+            result.output.contains("platform=com.kelvsyc.internal:platform:$conventionsVersion\n"),
+            result.output,
+        )
     }
 
     @Test
@@ -195,5 +282,43 @@ class SharedSettingsPluginTest {
         )
         val result = build("help")
         assertTrue(result.output.contains("coordinates=null"), result.output)
+    }
+
+    /**
+     * Writes plugin [id] at [version] to the Maven repository [repository]: its marker and a jar
+     * whose plugin descriptor points at Gradle's own `base` plugin, so no compilation is needed.
+     */
+    private fun publishPlugin(repository: File, id: String, version: String) {
+        val module = "plugin-${id.substringAfterLast('.')}"
+        fun pom(group: String, artifact: String, dependency: String = "") = """
+            |<?xml version="1.0" encoding="UTF-8"?>
+            |<project xmlns="http://maven.apache.org/POM/4.0.0">
+            |  <modelVersion>4.0.0</modelVersion>
+            |  <groupId>$group</groupId>
+            |  <artifactId>$artifact</artifactId>
+            |  <version>$version</version>
+            |  $dependency
+            |</project>
+        """.trimMargin()
+
+        val markerArtifact = "$id.gradle.plugin"
+        File(repository, "${id.replace('.', '/')}/$markerArtifact/$version/$markerArtifact-$version.pom")
+            .apply { parentFile.mkdirs() }
+            .writeText(
+                pom(
+                    id,
+                    markerArtifact,
+                    "<packaging>pom</packaging><dependencies><dependency><groupId>example</groupId>" +
+                        "<artifactId>$module</artifactId><version>$version</version></dependency></dependencies>",
+                ),
+            )
+
+        val moduleDir = File(repository, "example/$module/$version").apply { mkdirs() }
+        File(moduleDir, "$module-$version.pom").writeText(pom("example", module))
+        ZipOutputStream(File(moduleDir, "$module-$version.jar").outputStream()).use { jar ->
+            jar.putNextEntry(ZipEntry("META-INF/gradle-plugins/$id.properties"))
+            jar.write("implementation-class=org.gradle.api.plugins.BasePlugin\n".toByteArray())
+            jar.closeEntry()
+        }
     }
 }
