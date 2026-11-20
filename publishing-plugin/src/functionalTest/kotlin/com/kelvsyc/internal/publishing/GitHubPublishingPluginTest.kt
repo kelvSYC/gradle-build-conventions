@@ -1,0 +1,163 @@
+package com.kelvsyc.internal.publishing
+
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.transport.URIish
+import org.gradle.testkit.runner.BuildResult
+import org.gradle.testkit.runner.GradleRunner
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+
+class GitHubPublishingPluginTest {
+
+    @TempDir
+    lateinit var dir: File
+
+    private val conventionsVersion: String = System.getProperty("conventions.version")
+        ?: error("System property conventions.version is not set")
+
+    /**
+     * Writes a `java-library` consumer build applying the publishing plugin at the version under
+     * test with a `maven` publication of the `java` component, then commits it to a fresh git
+     * repository (optionally with an `origin` remote).
+     */
+    private fun consumer(buildBody: String = "", origin: String? = null) {
+        File(dir, "settings.gradle.kts").writeText(
+            """
+            |pluginManagement {
+            |    repositories {
+            |        exclusiveContent {
+            |            forRepository { mavenLocal() }
+            |            filter {
+            |                includeGroup("com.kelvsyc.internal")
+            |                includeGroup("com.kelvsyc.internal.github-publishing")
+            |            }
+            |        }
+            |        gradlePluginPortal()
+            |    }
+            |}
+            |
+            |dependencyResolutionManagement {
+            |    repositories {
+            |        exclusiveContent {
+            |            forRepository { mavenLocal() }
+            |            filter { includeGroup("com.kelvsyc.internal") }
+            |        }
+            |        mavenCentral()
+            |    }
+            |}
+            |
+            |rootProject.name = "consumer"
+            """.trimMargin(),
+        )
+        File(dir, "build.gradle.kts").writeText(
+            """
+            |plugins {
+            |    `java-library`
+            |    id("com.kelvsyc.internal.github-publishing") version "$conventionsVersion"
+            |}
+            |
+            |group = "com.example"
+            |version = "1.0"
+            |
+            |publishing {
+            |    publications {
+            |        create<MavenPublication>("maven") {
+            |            from(components["java"])
+            |        }
+            |    }
+            |}
+            |
+            |$buildBody
+            """.trimMargin(),
+        )
+        File(dir, ".gitignore").writeText(".gradle/\n.kotlin/\nbuild/\n")
+
+        Git.init().setDirectory(dir).setInitialBranch("main").call().use { git ->
+            git.add().addFilepattern(".").call()
+            git.commit().setMessage("consumer").setSign(false).call()
+            if (origin != null) git.remoteAdd().setName("origin").setUri(URIish(origin)).call()
+        }
+    }
+
+    private fun runner(vararg args: String): GradleRunner = GradleRunner.create()
+        .withProjectDir(dir)
+        .withArguments(*args, "--configuration-cache", "--stacktrace")
+        .forwardOutput()
+
+    private fun build(vararg args: String): BuildResult = runner(*args).build()
+
+    private fun buildAndFail(vararg args: String): BuildResult = runner(*args).buildAndFail()
+
+    @Test
+    fun repositoryUrlFromRemote() {
+        consumer(
+            buildBody = """
+                |val gitHubPackages = publishing.repositories["GitHubPackages"] as MavenArtifactRepository
+                |println("url=" + gitHubPackages.url)
+            """.trimMargin(),
+            origin = "https://github.com/kelvSYC/rifflet.git",
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("url=https://maven.pkg.github.com/kelvSYC/rifflet\n"), result.output)
+    }
+
+    @Test
+    fun internalPlatformStripped() {
+        consumer(
+            buildBody = """
+                |dependencies {
+                |    implementation(platform("com.kelvsyc.internal:platform:$conventionsVersion"))
+                |    implementation("org.apache.commons:commons-lang3")
+                |}
+            """.trimMargin(),
+            origin = "https://github.com/kelvSYC/rifflet.git",
+        )
+        build("generatePomFileForMavenPublication", "generateMetadataFileForMavenPublication")
+
+        val pom = File(dir, "build/publications/maven/pom-default.xml").readText()
+        val module = File(dir, "build/publications/maven/module.json").readText()
+        assertFalse(pom.contains("com.kelvsyc.internal"), pom)
+        assertFalse(module.contains("com.kelvsyc.internal"), module)
+        // The platform's version still reaches consumers through version mapping.
+        assertTrue(pom.contains("<artifactId>commons-lang3</artifactId>"), pom)
+        assertTrue(Regex("<artifactId>commons-lang3</artifactId>\\s*<version>").containsMatchIn(pom), pom)
+    }
+
+    @Test
+    fun versionlessDependencyFails() {
+        // A variant with its own usage has no resolution result for version mapping to use, like
+        // the Kotlin Multiplatform target publications.
+        consumer(
+            buildBody = """
+                |val customDependencies = configurations.dependencyScope("customDependencies")
+                |val customElements = configurations.consumable("customElements") {
+                |    extendsFrom(customDependencies.get())
+                |    attributes { attribute(Usage.USAGE_ATTRIBUTE, objects.named("custom-usage")) }
+                |}
+                |(components["java"] as AdhocComponentWithVariants).addVariantsFromConfiguration(customElements.get()) {}
+                |
+                |dependencies {
+                |    implementation("org.apache.commons:commons-lang3:3.17.0")
+                |    "customDependencies"("org.example:versionless")
+                |}
+            """.trimMargin(),
+            origin = "https://github.com/kelvSYC/rifflet.git",
+        )
+        val result = buildAndFail("generateMetadataFileForMavenPublication")
+        assertTrue(result.output.contains("would publish dependencies without a version"), result.output)
+        assertTrue(result.output.contains("org.example:versionless"), result.output)
+    }
+
+    @Test
+    fun noRemoteFailsClearly() {
+        consumer()
+        // Builds that do not publish to GitHub Packages are unaffected.
+        build("assemble", "generatePomFileForMavenPublication")
+
+        val result = buildAndFail("publishMavenPublicationToGitHubPackagesRepository")
+        assertTrue(result.output.contains("'origin'"), result.output)
+    }
+}

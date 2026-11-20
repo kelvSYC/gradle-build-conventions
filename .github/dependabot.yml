@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: daily
+    # The compiler Kotlin version follows Gradle's embedded Kotlin, so Dependabot must not bump it.
+    ignore:
+      - dependency-name: "org.jetbrains.kotlin:kotlin-gradle-plugin"
+      - dependency-name: "org.jetbrains.kotlin:kotlin-gradle-plugins-bom"
+      - dependency-name: "org.jetbrains.kotlin.multiplatform"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
