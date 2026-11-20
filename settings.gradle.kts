@@ -15,10 +15,6 @@ dependencyResolutionManagement {
         mavenCentral()
         gradlePluginPortal()
     }
-
-    versionCatalogs.register("libs") {
-        from(files("catalog/libs.versions.toml"))
-    }
 }
 
 rootProject.name = "gradle-build-conventions"

@@ -81,6 +81,10 @@ testing {
                 )
                     .withPropertyName("publishedModuleSources")
                     .withPathSensitivity(PathSensitivity.RELATIVE)
+                // The shared catalog sits at the root (gradle/libs.versions.toml), outside the module directories above.
+                inputs.file(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml"))
+                    .withPropertyName("sharedCatalog")
+                    .withPathSensitivity(PathSensitivity.RELATIVE)
             }
         }
     }
