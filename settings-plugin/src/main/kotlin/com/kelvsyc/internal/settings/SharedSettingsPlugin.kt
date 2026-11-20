@@ -26,13 +26,16 @@ abstract class KelvsycSettingsExtension {
  * dependency repositories (Gradle Plugin Portal, Maven Central and the GitHub Packages
  * repositories of `kelvSYC/gradle-build-conventions` and `kelvSYC/kotlin-tools`), registers the
  * shared catalog published at [SharedConventions.VERSION] as `libs`, and applies the `kelvsyc`
- * extension's group to every project.
+ * extension's group to every project. `libs` also gets the shared platform at that version, as
+ * `libs.conventions.platform`.
  *
- * Plugin requests in the `com.kelvsyc.internal` namespace that carry no version, such as
+ * Plugin requests in exactly the `com.kelvsyc.internal` namespace that carry no version, such as
  * `id("com.kelvsyc.internal.github-publishing")` in a build script, resolve at
  * [SharedConventions.VERSION]. This keeps every shared convention plugin at the same version as
  * this one, which matters beyond convenience: these classes are loaded in the settings
- * classloader, ahead of any copy another plugin of a different version brings along.
+ * classloader, ahead of any copy another plugin of a different version brings along. Plugins in
+ * a longer namespace, such as a build's own `com.kelvsyc.internal.kotlin-tools.*` conventions,
+ * are left alone.
  *
  * GitHub Packages credentials come from the `gpr.user`/`gpr.key` Gradle properties, falling back
  * to the `GITHUB_ACTOR`/`GITHUB_TOKEN` environment variables.
@@ -46,7 +49,7 @@ class SharedSettingsPlugin : Plugin<Settings> {
         extension.group.convention("com.kelvsyc")
 
         settings.pluginManagement.resolutionStrategy.eachPlugin {
-            if (requested.version == null && requested.id.namespace?.isSharedNamespace() == true) {
+            if (requested.version == null && requested.id.namespace == SHARED_NAMESPACE) {
                 useVersion(SharedConventions.VERSION)
             }
         }
@@ -69,6 +72,7 @@ class SharedSettingsPlugin : Plugin<Settings> {
             }
             versionCatalogs.register("libs") {
                 from("com.kelvsyc.internal:catalog:${SharedConventions.VERSION}")
+                library("conventions-platform", "com.kelvsyc.internal", "platform").version(SharedConventions.VERSION)
             }
         }
 
@@ -81,8 +85,6 @@ class SharedSettingsPlugin : Plugin<Settings> {
             }
         }
     }
-
-    private fun String.isSharedNamespace() = this == SHARED_NAMESPACE || startsWith("$SHARED_NAMESPACE.")
 
     /**
      * The group Gradle assigns a project that never sets one: empty for the root project, else

@@ -8,7 +8,7 @@ This file is the agent guidance for this repository and is written to be model-n
 
 - `catalog` — publishes the shared version catalog, defined in `gradle/libs.versions.toml`: Gradle's standard location, which Dependabot requires to open update PRs, and which Gradle also registers as this build's own `libs`
 - `platform` — platform BOM
-- `settings-plugin` — settings plugin wiring repositories, the shared catalog, the default group and versionless `com.kelvsyc.internal.*` plugin requests into consumer builds (not the platform: consumers declare it); plugin IDs `com.kelvsyc.internal.settings` and `com.kelvsyc.internal.semver`
+- `settings-plugin` — settings plugin wiring repositories, the shared catalog (plus the platform as `libs.conventions.platform`; consumers declare the dependency themselves), the default group and versionless plugin requests into consumer builds; plugin IDs `com.kelvsyc.internal.settings` and `com.kelvsyc.internal.semver`. Only versionless requests in exactly the `com.kelvsyc.internal` namespace get the shared version: consumers' own plugins in longer namespaces (e.g. `com.kelvsyc.internal.kotlin-tools.*`) must resolve as the consumer declares them.
 - `publishing-plugin` — GitHub Packages publishing convention; plugin ID `com.kelvsyc.internal.github-publishing`
 
 ## Publishing
