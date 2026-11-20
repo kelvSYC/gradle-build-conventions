@@ -22,53 +22,49 @@ dependencies {
 }
 
 gradlePlugin {
-    plugins {
-        create("githubPublishing") {
-            id = "com.kelvsyc.internal.github-publishing"
-            implementationClass = "com.kelvsyc.internal.publishing.GitHubPublishingPlugin"
-        }
+    plugins.create("githubPublishing") {
+        id = "com.kelvsyc.internal.github-publishing"
+        implementationClass = "com.kelvsyc.internal.publishing.GitHubPublishingPlugin"
     }
 }
 
 testing {
-    suites {
-        register<JvmTestSuite>("functionalTest") {
-            useJUnitJupiter("5.14.1")
+    suites.register<JvmTestSuite>("functionalTest") {
+        useJUnitJupiter("5.14.1")
 
-            dependencies {
-                implementation(gradleTestKit())
-                implementation(libs.jgit)
-            }
+        dependencies {
+            implementation(gradleTestKit())
+            implementation(libs.jgit)
+        }
 
-            targets.configureEach {
-                testTask.configure {
-                    // Test builds resolve the artifacts under test from Maven Local, never from a
-                    // publishing repository: any repository in `publishing.repositories` would join
-                    // the `publish` lifecycle.
-                    dependsOn(
-                        ":platform:publishToMavenLocal",
-                        ":settings-plugin:publishToMavenLocal",
-                        ":publishing-plugin:publishToMavenLocal",
-                    )
-                    systemProperty("conventions.version", project.version.toString())
-                    // The artifacts come from Maven Local, outside the test's classpath, so their
-                    // sources are declared as inputs: a catalog, platform or plugin change reruns the
-                    // tests instead of leaving them up to date.
-                    inputs.files(
-                        listOf("catalog", "platform", "settings-plugin", "publishing-plugin").map { module ->
-                            rootProject.layout.projectDirectory.dir(module).asFileTree.matching {
-                                exclude("build/", ".gradle/", ".kotlin/", "src/*Test/")
-                            }
-                        },
-                    )
-                        .withPropertyName("publishedModuleSources")
-                        .withPathSensitivity(PathSensitivity.RELATIVE)
-                }
+        targets.configureEach {
+            testTask.configure {
+                // Test builds resolve the artifacts under test from Maven Local, never from a
+                // publishing repository: any repository in `publishing.repositories` would join
+                // the `publish` lifecycle.
+                dependsOn(
+                    ":platform:publishToMavenLocal",
+                    ":settings-plugin:publishToMavenLocal",
+                    ":publishing-plugin:publishToMavenLocal",
+                )
+                systemProperty("conventions.version", project.version.toString())
+                // The artifacts come from Maven Local, outside the test's classpath, so their
+                // sources are declared as inputs: a catalog, platform or plugin change reruns the
+                // tests instead of leaving them up to date.
+                inputs.files(
+                    listOf("catalog", "platform", "settings-plugin", "publishing-plugin").map { module ->
+                        rootProject.layout.projectDirectory.dir(module).asFileTree.matching {
+                            exclude("build/", ".gradle/", ".kotlin/", "src/*Test/")
+                        }
+                    },
+                )
+                    .withPropertyName("publishedModuleSources")
+                    .withPathSensitivity(PathSensitivity.RELATIVE)
             }
         }
     }
 }
 
-tasks.check {
+tasks.named("check") {
     dependsOn(testing.suites.named("functionalTest"))
 }
