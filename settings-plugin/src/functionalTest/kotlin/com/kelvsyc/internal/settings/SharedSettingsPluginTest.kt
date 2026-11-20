@@ -39,6 +39,7 @@ class SharedSettingsPluginTest {
             |                includeGroup("com.kelvsyc.internal")
             |                includeGroup("com.kelvsyc.internal.settings")
             |                includeGroup("com.kelvsyc.internal.semver")
+            |                includeGroup("com.kelvsyc.internal.github-publishing")
             |            }
             |        }
             |        gradlePluginPortal()
@@ -94,6 +95,20 @@ class SharedSettingsPluginTest {
         consumer(buildScript = """println("version=" + version)""", tag = "v1.2.3")
         val result = build("help")
         assertTrue(result.output.contains("version=1.2.3\n"), result.output)
+    }
+
+    @Test
+    fun internalProjectPluginsDefaultToTheSettingsPluginVersion() {
+        consumer(
+            buildScript = """
+                plugins {
+                    id("com.kelvsyc.internal.github-publishing")
+                }
+                println("repositories=" + publishing.repositories.names)
+            """.trimIndent(),
+        )
+        val result = build("help")
+        assertTrue(result.output.contains("repositories=[GitHubPackages]"), result.output)
     }
 
     @Test

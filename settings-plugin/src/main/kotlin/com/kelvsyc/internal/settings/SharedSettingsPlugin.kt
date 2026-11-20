@@ -28,6 +28,12 @@ abstract class KelvsycSettingsExtension {
  * shared catalog published at [SharedConventions.VERSION] as `libs`, and applies the `kelvsyc`
  * extension's group to every project.
  *
+ * Plugin requests in the `com.kelvsyc.internal` namespace that carry no version, such as
+ * `id("com.kelvsyc.internal.github-publishing")` in a build script, resolve at
+ * [SharedConventions.VERSION]. This keeps every shared convention plugin at the same version as
+ * this one, which matters beyond convenience: these classes are loaded in the settings
+ * classloader, ahead of any copy another plugin of a different version brings along.
+ *
  * GitHub Packages credentials come from the `gpr.user`/`gpr.key` Gradle properties, falling back
  * to the `GITHUB_ACTOR`/`GITHUB_TOKEN` environment variables.
  */
@@ -38,6 +44,12 @@ class SharedSettingsPlugin : Plugin<Settings> {
 
         val extension = settings.extensions.create("kelvsyc", KelvsycSettingsExtension::class.java)
         extension.group.convention("com.kelvsyc")
+
+        settings.pluginManagement.resolutionStrategy.eachPlugin {
+            if (requested.version == null && requested.id.namespace?.isSharedNamespace() == true) {
+                useVersion(SharedConventions.VERSION)
+            }
+        }
 
         settings.pluginManagement.repositories {
             gradlePluginPortal()
@@ -70,6 +82,8 @@ class SharedSettingsPlugin : Plugin<Settings> {
         }
     }
 
+    private fun String.isSharedNamespace() = this == SHARED_NAMESPACE || startsWith("$SHARED_NAMESPACE.")
+
     /**
      * The group Gradle assigns a project that never sets one: empty for the root project, else
      * the root project's name followed by the parent's path segments, joined with `.`.
@@ -92,5 +106,10 @@ class SharedSettingsPlugin : Plugin<Settings> {
                 password = key.orNull
             }
         }
+    }
+
+    private companion object {
+        /** The plugin ID namespace of the shared build conventions. */
+        const val SHARED_NAMESPACE = "com.kelvsyc.internal"
     }
 }
