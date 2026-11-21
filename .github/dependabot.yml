@@ -1,5 +1,7 @@
 version: 2
 # Dependabot takes this build's repositories from settings.gradle.kts (dependencyResolutionManagement); see AGENTS.md.
+# It also reads the publishing repository in the root build's `subprojects {}` block as a dependency repository, so its
+# logs show harmless 404s for libraries looked up there.
 updates:
   - package-ecosystem: gradle
     directory: /
