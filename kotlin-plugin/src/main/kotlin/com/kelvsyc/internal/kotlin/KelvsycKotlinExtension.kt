@@ -24,6 +24,12 @@ abstract class KelvsycKotlinExtension {
      *
      * On JVM targets the API version must not be above this version's `major.minor`, or the published output would
      * call standard library members its declared `kotlin-stdlib` lacks; compilation fails if it is.
+     *
+     * Unlike the other properties, this one is not wired lazily: the Kotlin Gradle plugin's `coreLibrariesVersion` is a
+     * plain value. The default is set on it when the plugin is applied, and this property's value is copied to it after
+     * the project is evaluated, unless the build script set `kotlin.coreLibrariesVersion` itself (which therefore
+     * always wins). Consequently, a value set here in an `afterEvaluate` block is missed, and a build script that reads
+     * `kotlin.coreLibrariesVersion` during evaluation sees the default rather than a value set here.
      */
     abstract val coreLibrariesVersion: Property<String>
 

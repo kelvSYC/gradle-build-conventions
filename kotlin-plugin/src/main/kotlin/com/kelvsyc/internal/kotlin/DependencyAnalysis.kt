@@ -29,5 +29,10 @@ internal fun Project.applyDependencyAnalysis() {
     when (val extension = extensions.getByName("dependencyAnalysis")) {
         is DependencyAnalysisExtension -> extension.issues { all(rules) }
         is DependencyAnalysisSubExtension -> extension.issues(rules)
+        // Never silently drop the rules: a Dependency Analysis plugin with other extension types needs an update here.
+        else -> error(
+            "Unexpected Dependency Analysis extension type ${extension.javaClass.name} in $path; " +
+                "the shared Kotlin conventions cannot apply their dependency rules to it.",
+        )
     }
 }

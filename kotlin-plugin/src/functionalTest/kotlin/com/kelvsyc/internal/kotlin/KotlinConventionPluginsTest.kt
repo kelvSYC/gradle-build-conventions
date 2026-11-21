@@ -39,6 +39,10 @@ class KotlinConventionPluginsTest {
     private val conventionsVersion: String = System.getProperty("conventions.version")
         ?: error("System property conventions.version is not set")
 
+    /** The compiler Kotlin version, the catalog's `kotlin`. */
+    private val kotlinVersion: String = System.getProperty("conventions.kotlin")
+        ?: error("System property conventions.kotlin is not set")
+
     // Shared fixtures ------------------------------------------------------------------------------------------------
 
     /** A published KMP JVM library with common and JVM sources and Kotest specs, checked and its metadata generated. */
@@ -339,7 +343,7 @@ class KotlinConventionPluginsTest {
         )
         val output = failTwice(dir, "help").output
         assertTrue(output.contains("Kotlin Gradle plugin $OLDER_KOTLIN is applied"), output)
-        assertTrue(output.contains("kotlin = \"$KOTLIN\""), output)
+        assertTrue(output.contains("kotlin = \"$kotlinVersion\""), output)
     }
 
     @Test
@@ -367,7 +371,7 @@ class KotlinConventionPluginsTest {
         )
         fabricateModule(File(dir, "fabricated-repository"), "org.jetbrains.kotlin", "kotlin-daemon-client", "99.0")
         val output = failTwice(dir, "help").output
-        assertTrue(output.contains("differ from Kotlin Gradle plugin $KOTLIN"), output)
+        assertTrue(output.contains("differ from Kotlin Gradle plugin $kotlinVersion"), output)
         assertTrue(output.contains("kotlin-daemon-client:99.0"), output)
     }
 
@@ -411,7 +415,7 @@ class KotlinConventionPluginsTest {
         assertTrue(output.contains("targets=[js, metadata]\n"), output)
         assertTrue(output.contains("ksp=true\n"), output)
         assertTrue(output.contains("kotest=true\n"), output)
-        assertTrue(output.contains("org.jetbrains.kotlin:kotlin-stdlib:$KOTLIN"), output)
+        assertTrue(output.contains("org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"), output)
         assertTrue(output.contains("node=22.12.0\n"), output)
     }
 
@@ -601,10 +605,10 @@ class KotlinConventionPluginsTest {
     }
 
     private companion object {
-        /** The compiler Kotlin version, the catalog's `kotlin`. */
-        const val KOTLIN = "2.4.21"
-
-        /** A released Kotlin Gradle plugin older than [KOTLIN]. */
+        /**
+         * A released Kotlin Gradle plugin older than the catalog's `kotlin`. Fixed rather than derived from it: any
+         * real release below the compiler version will do, and the catalog only moves forward.
+         */
         const val OLDER_KOTLIN = "2.4.10"
 
         const val CONFIGURATION_CACHE_REUSED = "Configuration cache entry reused."

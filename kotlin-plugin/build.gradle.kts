@@ -84,6 +84,7 @@ testing {
                     ":kotlin-plugin:publishToMavenLocal",
                 )
                 systemProperty("conventions.version", project.version.toString())
+                systemProperty("conventions.kotlin", libs.versions.kotlin.get())
                 // The artifacts come from Maven Local, outside the test's classpath, so their
                 // sources are declared as inputs: a catalog, platform or plugin change reruns the
                 // tests instead of leaving them up to date.
