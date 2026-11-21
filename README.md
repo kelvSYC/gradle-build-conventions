@@ -1,6 +1,6 @@
 # gradle-build-conventions
 
-Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin and Kotlin convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
+Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin and Dokka convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
 
 ## Consumer usage
 
@@ -58,6 +58,7 @@ kelvsyc {
 | `com.kelvsyc.internal.kotlin-multiplatform-jvm` | `build.gradle.kts` | The base, plus a `jvm` target released for the floor JVM and tested on it; with Dokka, a javadoc jar of the Dokka HTML |
 | `com.kelvsyc.internal.kotlin-multiplatform-js` | `build.gradle.kts` | The base, plus a Node.js `js` library target with KSP and the Kotest Gradle plugin, and a pinned Node.js |
 | `com.kelvsyc.internal.kotlin-jvm-library` | `build.gradle.kts` | Kotlin JVM library with the same floors and checks, sources jar and Kotest; a `maven` publication with `maven-publish` |
+| `com.kelvsyc.internal.dokka` | `build.gradle.kts` | Dokka HTML documentation built by `assemble`, linking the JDK, the Kotlin standard library and the sources on GitHub; a javadoc jar of the Dokka Javadoc output for `java` projects that are not Kotlin Multiplatform |
 
 ### Kotlin compatibility floors
 
@@ -75,9 +76,27 @@ kelvsycKotlin {
 
 Compiler options set directly in a build script (`kotlin { compilerOptions { ... } }`) win over the extension. On JVM targets, compilation fails if the API version is above the `major.minor` of `coreLibrariesVersion`, since the published `kotlin-stdlib` would lack API the output may use.
 
+`coreLibrariesVersion` is the one floor not wired lazily, because the Kotlin Gradle plugin's `kotlin.coreLibrariesVersion` is a plain value: the extension's value is copied to it after the project is evaluated, unless the build script set `kotlin.coreLibrariesVersion` directly, which always wins. Set the extension's value during evaluation, not in an `afterEvaluate` block, and note that `kotlin.coreLibrariesVersion` read during evaluation (for example in `kotlin("reflect", kotlin.coreLibrariesVersion)`) still holds the default; set `kotlin.coreLibrariesVersion` directly when the build script reads it.
+
 The Kotlin Gradle plugin these conventions apply is the compiler, fixed to the catalog's `kotlin`. Builds applying them fail if the applied Kotlin Gradle plugin differs from it, or if another `org.jetbrains.kotlin` artifact on the build script classpath differs from the plugin.
 
 Builds with their own convention plugins that build on the shared Kotlin conventions depend on `libs.conventions.kotlin.plugin` (and `libs.conventions.dokka.plugin` for the Dokka convention), both at the settings plugin's version.
+
+### Dokka
+
+The Dokka convention also applies to projects without Kotlin or Java, such as a documentation aggregator. Each declaration links to its source at `https://github.com/<owner>/<repo>/blob/<commit>/<path>`: the repository comes from the `origin` git remote, the commit is `HEAD`, and the path is relative to the root project of the outermost build (the composite's root). Without a GitHub `origin` there are no source links.
+
+The JDK documentation linked is that of the release the output targets, not the JDK that compiles it: the `kelvsycKotlin` extension's `jvmRelease` with the Kotlin Multiplatform JVM convention, otherwise the release `compileJava` targets, falling back to the Java toolchain's version, then to the JDK running Gradle. A build script overrides it per source set:
+
+```kotlin
+dokka {
+    dokkaSourceSets.configureEach {
+        jdkVersion.set(21)
+    }
+}
+```
+
+Dokka bundles Jackson, jsoup and FreeMarker at versions with known vulnerabilities. Dokka's own configurations (those named `dokka*`) resolve them at the shared catalog's patched versions, fixed when the plugin is built, and the plugin brings Jackson's BOM to the build script classpath; the project's own classpaths are left alone.
 
 ## Keeping the pin up to date
 
