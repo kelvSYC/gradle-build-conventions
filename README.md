@@ -1,6 +1,6 @@
 # gradle-build-conventions
 
-Shared Gradle build conventions (version catalog, platform BOM, settings plugin and publishing plugin) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
+Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin and Kotlin convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
 
 ## Consumer usage
 
@@ -32,7 +32,7 @@ plugins {
 }
 ```
 
-The settings plugin also registers the shared catalog as `libs`, with the platform BOM at the same version added as `libs.conventions.platform`. The platform is not applied to any configuration: builds that want it declare it themselves (the shared Kotlin convention plugins will do this for them):
+The settings plugin also registers the shared catalog as `libs`, with the platform BOM at the same version added as `libs.conventions.platform`. The platform is not applied to any configuration: builds that want it declare it themselves (the shared Kotlin convention plugins do this for them):
 
 ```kotlin
 dependencies {
@@ -53,6 +53,31 @@ kelvsyc {
 | `com.kelvsyc.internal.settings` | `settings.gradle.kts` | Repositories, the shared catalog as `libs`, the default project group, semver, and versions for the other shared plugins |
 | `com.kelvsyc.internal.semver` | `settings.gradle.kts` | Derives the project version from git tags |
 | `com.kelvsyc.internal.github-publishing` | `build.gradle.kts` | Publishes to GitHub Packages |
+| `com.kelvsyc.internal.kotlin-multiplatform-base` | `build.gradle.kts` | Kotlin Multiplatform without a target: compatibility floors, Kotlin toolchain checks, the shared platform, Kotest, `checkCommonMainPlatformImports`, Dependency Analysis |
+| `com.kelvsyc.internal.kotlin-multiplatform-library` | `build.gradle.kts` | The base, plus published sources jars |
+| `com.kelvsyc.internal.kotlin-multiplatform-jvm` | `build.gradle.kts` | The base, plus a `jvm` target released for the floor JVM and tested on it; with Dokka, a javadoc jar of the Dokka HTML |
+| `com.kelvsyc.internal.kotlin-multiplatform-js` | `build.gradle.kts` | The base, plus a Node.js `js` library target with KSP and the Kotest Gradle plugin, and a pinned Node.js |
+| `com.kelvsyc.internal.kotlin-jvm-library` | `build.gradle.kts` | Kotlin JVM library with the same floors and checks, sources jar and Kotest; a `maven` publication with `maven-publish` |
+
+### Kotlin compatibility floors
+
+The Kotlin convention plugins compile for the oldest Kotlin and Java consumers are expected to use. The floors are shared defaults, set on the `kelvsycKotlin` extension, which a project can override:
+
+```kotlin
+kelvsycKotlin {
+    languageVersion = KotlinVersion.KOTLIN_2_3 // also the API version; default 2.2
+    coreLibrariesVersion = "2.3.0" // kotlin-stdlib in published metadata; default 2.2.21
+    jvmRelease = 17 // Java release of the JVM output, and the JDK tests run on; default 17
+    jvmToolchain = 25 // JDK that compiles; default 25
+    nodeVersion = "22.12.0" // Node.js for JS tests; default 22.12.0
+}
+```
+
+Compiler options set directly in a build script (`kotlin { compilerOptions { ... } }`) win over the extension. On JVM targets, compilation fails if the API version is above the `major.minor` of `coreLibrariesVersion`, since the published `kotlin-stdlib` would lack API the output may use.
+
+The Kotlin Gradle plugin these conventions apply is the compiler, fixed to the catalog's `kotlin`. Builds applying them fail if the applied Kotlin Gradle plugin differs from it, or if another `org.jetbrains.kotlin` artifact on the build script classpath differs from the plugin.
+
+Builds with their own convention plugins that build on the shared Kotlin conventions depend on `libs.conventions.kotlin.plugin` (and `libs.conventions.dokka.plugin` for the Dokka convention), both at the settings plugin's version.
 
 ## Keeping the pin up to date
 
