@@ -23,7 +23,9 @@ Versions come from git tags via the semver settings plugin; on a tagged commit t
 2. Run `./gradlew check`, then `./gradlew publish` as a separate invocation (with the configuration cache, tasks of one invocation run in parallel, so `check publish` would not hold publishing back until every check passed). Semver reads the local tag, so the bare release version is published.
 3. Push the tag, only if step 1 created it.
 
-The tag is pushed last so that a failed check or publish never leaves a remote tag without artifacts. Next-version rules:
+The tag is pushed last so that a failed check or publish never leaves a remote tag without artifacts. If only the tag push fails, the release is published but the tag is missing from the repository, and the next release would compute the same version and fail to publish it. Recover by pushing the tag by hand: `git tag -a vX.Y.Z -m "Release vX.Y.Z" <released commit>` and `git push origin vX.Y.Z`, with the version from the failed run's log. Re-running the workflow instead would try to publish the same version again.
+
+Next-version rules:
 
 - no tag yet: `v0.1.0`
 - default: patch bump
@@ -39,7 +41,7 @@ The labels must exist in the GitHub repository. They are read from the PR that p
 - Dependabot groups routine Gradle updates (minor and patch) into one PR, because every merge to `main` is a release that each consumer then picks up. Majors, pre-1.0 libraries (where a "minor" can break) and the Gradle wrapper get their own PRs; extend `exclude-patterns` in `.github/dependabot.yml` when another library proves unreliable about semver. To drop one dependency from a grouped PR, comment `@dependabot ignore <dependency> minor version` (or `major version`, or just the name) on it; `@dependabot unignore <dependency>` restores it. Most catalog entries are used only by consumers, so this repository's own tests do not exercise them; the canary (below) does.
 - The grouped catalog PR (`catalog-minor-and-patch`) merges itself: `.github/workflows/dependabot-auto-merge.yml` enables GitHub auto-merge on it, so it merges once the required checks (`build` and every `canary (<consumer>)` job) pass, and the merge releases. Every other Dependabot PR (majors, the excluded libraries, the Gradle wrapper, GitHub Actions) waits for a person. Auto-merge is enabled with the `CONVENTIONS_TOKEN` personal access token, stored in both the Dependabot and Actions secrets (a run started by Dependabot sees only the former, one started by a person pushing to the PR only the latter), because a merge made with `GITHUB_TOKEN` triggers no workflows and would not release. Adding a consumer to the canary means adding its `canary (<repository>)` check to the required checks.
 - Gradle updates run weekly, and patch updates of the AWS SDK BOMs (`software.amazon.awssdk:bom`, `aws.sdk.kotlin:bom`) are ignored: they release almost daily, and every merge here becomes a release and a bump in each consumer. Their minor updates still come through.
-- A Gradle upgrade is one change: the wrapper, the catalog's `gradle`, and the catalog's `kotlin` when the new Gradle embeds a different Kotlin. Dependabot ignores standalone Kotlin Gradle plugin bumps for that reason.
+- A Gradle upgrade is one change: the wrapper, the catalog's `gradle`, and the catalog's `kotlin` when the new Gradle embeds a different Kotlin. Dependabot ignores standalone Kotlin Gradle plugin bumps for that reason. Its Gradle wrapper PRs change only the wrapper, so they fail `checkToolchainVersions` as opened: complete them in place by setting the catalog's `gradle` to the new version (and `kotlin` to the new embedded Kotlin, from the Gradle release notes) on the same branch.
 
 ## Canary
 
