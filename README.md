@@ -55,7 +55,7 @@ kelvsyc {
 | `com.kelvsyc.internal.github-publishing` | `build.gradle.kts` | Publishes to GitHub Packages |
 | `com.kelvsyc.internal.kotlin-multiplatform-base` | `build.gradle.kts` | Kotlin Multiplatform without a target: compatibility floors, Kotlin toolchain checks, the shared platform, Kotest, `checkCommonMainPlatformImports`, Dependency Analysis |
 | `com.kelvsyc.internal.kotlin-multiplatform-library` | `build.gradle.kts` | The base, plus published sources jars |
-| `com.kelvsyc.internal.kotlin-multiplatform-jvm` | `build.gradle.kts` | The base, plus a `jvm` target released for the floor JVM and tested on it; with Dokka, a javadoc jar of the Dokka HTML |
+| `com.kelvsyc.internal.kotlin-multiplatform-jvm` | `build.gradle.kts` | The base, plus a `jvm` target released for the floor JVM and tested on it; with Dokka, a javadoc jar (Dokka Javadoc when every target is a JVM target, else Dokka HTML; see Dokka below) |
 | `com.kelvsyc.internal.kotlin-multiplatform-js` | `build.gradle.kts` | The base, plus a Node.js `js` library target with KSP and the Kotest Gradle plugin, and a pinned Node.js |
 | `com.kelvsyc.internal.kotlin-jvm-library` | `build.gradle.kts` | Kotlin JVM library with the same floors and checks, sources jar and Kotest; a `maven` publication with `maven-publish` |
 | `com.kelvsyc.internal.dokka` | `build.gradle.kts` | Dokka HTML documentation built by `assemble`, linking the JDK, the Kotlin standard library and the sources on GitHub; a javadoc jar of the Dokka Javadoc output for `java` projects that are not Kotlin Multiplatform |
@@ -95,6 +95,8 @@ dokka {
     }
 }
 ```
+
+A Kotlin Multiplatform project with the `kotlin-multiplatform-jvm` convention gets a javadoc jar on its `jvm` publication, chosen once the project is evaluated. If every target is a JVM target (besides the common metadata), `org.jetbrains.dokka-javadoc` is applied and the jar holds Dokka's Javadoc output. With any other target (JS, native, Wasm, Android), the jar holds the HTML documentation instead, because Dokka's Javadoc format rejects source sets that are neither JVM nor common. Adding a non-JVM target to a JVM-only project therefore switches its javadoc jar from Javadoc to HTML.
 
 Dokka bundles Jackson, jsoup and FreeMarker at versions with known vulnerabilities. Dokka's own configurations (those named `dokka*`) resolve them at the shared catalog's patched versions, fixed when the plugin is built, and the plugin brings Jackson's BOM to the build script classpath; the project's own classpaths are left alone.
 

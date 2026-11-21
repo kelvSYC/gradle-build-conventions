@@ -17,7 +17,8 @@ import org.jetbrains.dokka.gradle.DokkaExtension
  * - Every source set links the JDK and Kotlin standard library documentation, and links its declarations to their
  *   sources on GitHub (see [gitHubSourceLink]) when the `origin` git remote is a GitHub repository.
  * - With the shared Kotlin Multiplatform JVM convention, the JDK link is for the `kelvsycKotlin` extension's
- *   `jvmRelease`. That convention packages the HTML documentation as the `jvm` publication's javadoc jar.
+ *   `jvmRelease`. That convention gives the `jvm` publication a javadoc jar: Dokka's Javadoc output when every target
+ *   is a JVM target, else the HTML documentation.
  * - A project with the `java` plugin and without Kotlin Multiplatform also gets `org.jetbrains.dokka-javadoc`, and
  *   a javadoc jar of the Dokka Javadoc output. Its JDK link is for the release `compileJava` targets, or else the
  *   version of its Java toolchain, or else the version of the JDK running Gradle.

@@ -19,7 +19,7 @@ import java.util.zip.ZipFile
  *
  * Each fixture build is shared by the tests that assert on it: fixtures are built lazily, once per class. Every
  * fixture build runs twice with the configuration cache, and the second run must reuse it. Only [kmpJvm] generates
- * documentation, in Dokka's offline mode; the other fixtures inspect configuration.
+ * documentation (HTML and Javadoc), in Dokka's offline mode; the other fixtures inspect configuration.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DokkaConventionPluginTest {
@@ -111,7 +111,7 @@ class DokkaConventionPluginTest {
 
     /**
      * A Kotlin Multiplatform JVM library applying the Kotlin conventions, in a git repository with a GitHub `origin`.
-     * Its documentation is generated (offline) and packaged in the javadoc jar.
+     * Its documentation is generated (offline), and its Javadoc output packaged in the javadoc jar.
      */
     private val kmpJvm: Fixture by lazy {
         val dir = File(root, "kmp-jvm").apply { mkdirs() }
@@ -150,6 +150,41 @@ class DokkaConventionPluginTest {
         )
         val sha = commit(dir, origin = "https://github.com/example-owner/kmp-repo.git")
         Fixture(dir, buildTwice(dir, "assemble", "javadocJar"), sha)
+    }
+
+    /**
+     * A Kotlin Multiplatform library with JVM and JS targets. The JS convention is applied by the build script after
+     * the Dokka and JVM conventions, so its target appears only once they are applied.
+     */
+    private val kmpJs: Fixture by lazy {
+        val dir = File(root, "kmp-js").apply { mkdirs() }
+        writeSettings(dir, "kmp-js")
+        write(
+            dir,
+            "build.gradle.kts",
+            """
+            |plugins {
+            |    id("com.kelvsyc.internal.kotlin-multiplatform-jvm") version "$conventionsVersion"
+            |    id("com.kelvsyc.internal.dokka") version "$conventionsVersion"
+            |    id("com.kelvsyc.internal.kotlin-multiplatform-js") version "$conventionsVersion" apply false
+            |    `maven-publish`
+            |}
+            |
+            |apply(plugin = "com.kelvsyc.internal.kotlin-multiplatform-js")
+            |
+            |group = "com.example"
+            |version = "1.0"
+            |
+            |$PRINT_DOKKA
+            |afterEvaluate {
+            |    println("kmpJs.dokkaJavadoc=" + plugins.hasPlugin("org.jetbrains.dokka-javadoc"))
+            |    println("kmpJs.jvmPublicationClassifiers=" +
+            |        publishing.publications.getByName<MavenPublication>("jvm").artifacts.map { it.classifier })
+            |}
+            """.trimMargin(),
+        )
+        write(dir, "src/commonMain/kotlin/com/example/Greeting.kt", "package com.example\n\nfun greeting(): String = \"hello\"\n")
+        Fixture(dir, buildTwice(dir, "javadocJar", "--dry-run"), sha = null)
     }
 
     /**
@@ -294,21 +329,33 @@ class DokkaConventionPluginTest {
     }
 
     @Test
-    fun kmpJvmJavadocJarFromHtml() {
+    fun kmpJvmOnlyJavadocJarFromDokkaJavadoc() {
         val output = kmpJvm.result.output
         assertTrue(output.contains("kmp.java=false\n"), output)
-        assertTrue(output.contains("kmp.dokkaJavadoc=false\n"), output)
+        assertTrue(output.contains("kmp.dokkaJavadoc=true\n"), output)
         assertTrue(output.contains("kmp-jvm.jvmMain.jdkVersion=17\n"), output)
         assertTrue(Regex("kmp\\.jvmPublicationClassifiers=\\[.*\\bjavadoc\\b.*]").containsMatchIn(output), output)
+        assertEquals(TaskOutcome.SUCCESS, kmpJvm.result.task(":dokkaGeneratePublicationJavadoc")?.outcome)
         assertEquals(TaskOutcome.SUCCESS, kmpJvm.result.task(":javadocJar")?.outcome)
-        assertEquals(null, kmpJvm.result.task(":dokkaGeneratePublicationJavadoc"))
 
         val entries = ZipFile(File(kmpJvm.dir, "build/libs/kmp-jvm-1.0-javadoc.jar")).use { jar ->
             jar.entries().asSequence().map { it.name }.toList()
         }
-        assertTrue("index.html" in entries, entries.toString())
-        // Only Dokka's HTML format has a navigation page; its Javadoc format has none.
-        assertTrue("navigation.html" in entries, entries.toString())
+        // Javadoc output lists its packages in element-list and has no HTML-format navigation page.
+        assertTrue("element-list" in entries, entries.toString())
+        assertTrue("com/example/package-summary.html" in entries, entries.toString())
+        assertFalse("navigation.html" in entries, entries.toString())
+    }
+
+    @Test
+    fun kmpWithJsJavadocJarFromHtml() {
+        val output = kmpJs.result.output
+        assertTrue(output.contains("kmpJs.dokkaJavadoc=false\n"), output)
+        assertTrue(output.contains("kmp-js.jvmMain.jdkVersion=17\n"), output)
+        assertTrue(Regex("kmpJs\\.jvmPublicationClassifiers=\\[.*\\bjavadoc\\b.*]").containsMatchIn(output), output)
+        assertTrue(Regex("(?m)^:dokkaGeneratePublicationHtml SKIPPED$").containsMatchIn(output), output)
+        assertTrue(Regex("(?m)^:javadocJar SKIPPED$").containsMatchIn(output), output)
+        assertFalse(output.contains("dokkaGeneratePublicationJavadoc"), output)
     }
 
     // Forced versions ------------------------------------------------------------------------------------------------
