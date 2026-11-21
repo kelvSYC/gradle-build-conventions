@@ -199,6 +199,25 @@ class SharedSettingsPluginTest {
     }
 
     @Test
+    fun kotlinAndDokkaPluginsAreAvailableFromLibs() {
+        consumer(
+            buildScript = """
+                println("kotlin-plugin=" + libs.conventions.kotlin.plugin.get())
+                println("dokka-plugin=" + libs.conventions.dokka.plugin.get())
+            """.trimIndent(),
+        )
+        val result = build("help")
+        assertTrue(
+            result.output.contains("kotlin-plugin=com.kelvsyc.internal:kotlin-plugin:$conventionsVersion\n"),
+            result.output,
+        )
+        assertTrue(
+            result.output.contains("dokka-plugin=com.kelvsyc.internal:dokka-plugin:$conventionsVersion\n"),
+            result.output,
+        )
+    }
+
+    @Test
     fun groupDefaultsToKelvsyc() {
         consumer(buildScript = """println("group=" + group)""")
         val result = build("help")
