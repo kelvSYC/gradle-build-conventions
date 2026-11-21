@@ -35,6 +35,10 @@ abstract class KelvsycKotlinExtension {
 
     /**
      * The Java release the JVM output targets, and the JDK tests run on. Defaults to [DEFAULT_JVM_RELEASE].
+     *
+     * The shared Dokka convention (`com.kelvsyc.internal.dokka`) reads this property reflectively, through
+     * `getJvmRelease()` returning a `Provider` of `Int`, because the two plugins may be loaded by different class
+     * loaders. Its name and type are therefore a contract between the two plugins.
      */
     abstract val jvmRelease: Property<Int>
 

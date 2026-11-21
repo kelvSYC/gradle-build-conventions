@@ -1,5 +1,6 @@
 package com.kelvsyc.internal.dokka
 
+import org.gradle.api.GradleException
 import org.gradle.api.JavaVersion
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -96,8 +97,15 @@ private fun Project.configureDokkaJavadoc(dokka: DokkaExtension) {
  */
 private fun kelvsycKotlinJvmRelease(project: Project): Provider<Int> {
     val extension = project.extensions.getByName(KELVSYC_KOTLIN_EXTENSION)
-    val property = extension.javaClass.getMethod("getJvmRelease").invoke(extension) as Provider<*>
-    return property.map { it as Int }
+    val getter = extension.javaClass.methods.singleOrNull { it.name == "getJvmRelease" && it.parameterCount == 0 }
+    val property = getter?.invoke(extension) as? Provider<*>
+        ?: throw GradleException(mismatchedConventions(project, "has no jvmRelease property"))
+    return property.map { it as? Int ?: throw GradleException(mismatchedConventions(project, "jvmRelease is not an Int")) }
 }
+
+private fun mismatchedConventions(project: Project, problem: String): String =
+    "The $KELVSYC_KOTLIN_EXTENSION extension of ${project.path} $problem, so com.kelvsyc.internal.dokka cannot read " +
+        "the JVM release from com.kelvsyc.internal.kotlin-multiplatform-jvm. Both plugins must come from the same " +
+        "gradle-build-conventions version."
 
 private const val KELVSYC_KOTLIN_EXTENSION = "kelvsycKotlin"
