@@ -26,5 +26,6 @@ include(
     "publishing-plugin",
     "kotlin-common",
     "kotlin-plugin",
+    "kotlin-gradle-plugin-conventions",
     "dokka-plugin",
 )
