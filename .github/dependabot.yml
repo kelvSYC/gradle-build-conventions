@@ -35,5 +35,8 @@ updates:
           - "org.msgpack:*"
   - package-ecosystem: github-actions
     directory: /
+    # Dependabot holds back releases younger than a few days by default, and drops versions with no release date.
+    cooldown:
+      default-days: 3
     schedule:
       interval: daily
