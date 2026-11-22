@@ -43,6 +43,11 @@ gradlePlugin {
         implementationClass = "com.kelvsyc.internal.kotlin.KotlinMultiplatformJsPlugin"
     }
 
+    plugins.create("kotlinMultiplatformNative") {
+        id = "com.kelvsyc.internal.kotlin-multiplatform-native"
+        implementationClass = "com.kelvsyc.internal.kotlin.KotlinMultiplatformNativePlugin"
+    }
+
     plugins.create("kotlinJvmLibrary") {
         id = "com.kelvsyc.internal.kotlin-jvm-library"
         implementationClass = "com.kelvsyc.internal.kotlin.KotlinJvmLibraryPlugin"
