@@ -419,6 +419,62 @@ class KotlinConventionPluginsTest {
         assertTrue(output.contains("node=22.12.0\n"), output)
     }
 
+    // Native ----------------------------------------------------------------------------------------------------------
+
+    private val nativeFixture: String by lazy {
+        val dir = fixture(
+            "native",
+            buildScript = """
+                |import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+                |
+                |plugins {
+                |    id("com.kelvsyc.internal.kotlin-multiplatform-native") version "$conventionsVersion"
+                |}
+                |
+                |afterEvaluate {
+                |    println("targets=" + kotlin.targets.names.sorted())
+                |    println("kotest=" + plugins.hasPlugin("io.kotest"))
+                |    println("ksp=" + plugins.hasPlugin("com.google.devtools.ksp"))
+                |    println("base=" + plugins.hasPlugin("com.kelvsyc.internal.kotlin-multiplatform-base"))
+                |    kotlin.targets.withType<KotlinNativeTarget>().forEach { target ->
+                |        target.compilations.forEach { compilation ->
+                |            val optIn = compilation.compileTaskProvider.get().compilerOptions.optIn.get()
+                |            println("optIn." + target.name + "." + compilation.name + "=" + optIn)
+                |        }
+                |    }
+                |}
+            """.trimMargin(),
+            files = mapOf("src/commonMain/kotlin/com/example/Sample.kt" to "package com.example\n\nfun sample(): Int = 1\n"),
+        )
+        buildTwice(dir, "help").output
+    }
+
+    @Test
+    fun nativeTargetMatchesHost() {
+        val hostOs = System.getProperty("os.name")
+        val expected = when {
+            hostOs.startsWith("Linux") -> "linuxX64"
+            hostOs == "Mac OS X" -> "macosArm64"
+            hostOs.startsWith("Windows") -> "mingwX64"
+            else -> error("Unsupported host OS: $hostOs")
+        }
+        assertTrue(nativeFixture.contains("targets=[$expected, metadata]\n"), nativeFixture)
+    }
+
+    @Test
+    fun nativeCompilationsOptInToCinterop() {
+        val lines = nativeFixture.lines().filter { it.startsWith("optIn.") }
+        assertTrue(lines.size >= 2, nativeFixture)
+        lines.forEach { assertTrue(it.contains("kotlinx.cinterop.ExperimentalForeignApi"), it) }
+    }
+
+    @Test
+    fun appliesBaseAndKotest() {
+        assertTrue(nativeFixture.contains("ksp=true\n"), nativeFixture)
+        assertTrue(nativeFixture.contains("kotest=true\n"), nativeFixture)
+        assertTrue(nativeFixture.contains("base=true\n"), nativeFixture)
+    }
+
     // Dependency Analysis ---------------------------------------------------------------------------------------------
 
     @Test
