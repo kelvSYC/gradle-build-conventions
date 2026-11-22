@@ -108,4 +108,12 @@ jobs:
             export JAVA_HOME="${!jdk_home_var:?JDK ${CONSUMER_JDK} is not installed in this job}"
             echo "Building the consumer with JAVA_HOME=${JAVA_HOME}"
           fi
-          .github/scripts/canary.sh consumer "${{ steps.conventions.outputs.version }}" ${{ matrix.consumer.tasks }} --stacktrace
+          mkdir -p "$RUNNER_TEMP/trace"
+          .github/scripts/canary.sh consumer "${{ steps.conventions.outputs.version }}" ${{ matrix.consumer.tasks }} --stacktrace -Dorg.gradle.internal.operations.trace="$RUNNER_TEMP/trace/ops"
+      - name: Upload the build operation trace
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: trace-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/trace
+          retention-days: 3
