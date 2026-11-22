@@ -13,8 +13,10 @@ import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.publish.maven.tasks.GenerateMavenPom
 import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
 import org.gradle.api.publish.tasks.GenerateModuleMetadata
+import org.gradle.language.base.plugins.LifecycleBasePlugin
 import java.io.File
 
 /**
@@ -27,8 +29,10 @@ import java.io.File
  *
  * Every Maven publication publishes resolved dependency versions, and the internal platform
  * `com.kelvsyc.internal:platform` is stripped from its POM and Gradle module metadata.
- * [RequireDependencyVersions] then fails module metadata generation, which `check` depends on, if
- * any published dependency is still versionless.
+ * [VerifyPublishedDependencyVersions] (`verifyPublishedDependencyVersions`, part of `check`) fails
+ * if a generated POM still has a versionless dependency, without building any publication
+ * artifact. [RequireDependencyVersions] does the same for module metadata, which is generated
+ * (and built, since it lists every artifact) only when publishing.
  *
  * GitHub Packages credentials come from the `gpr.user`/`gpr.key` Gradle properties, falling back
  * to the `GITHUB_ACTOR`/`GITHUB_TOKEN` environment variables.
@@ -96,10 +100,23 @@ class GitHubPublishingPlugin : Plugin<Project> {
             doLast(RequireDependencyVersions())
         }
 
-        // Generate module metadata during `check` so RequireDependencyVersions fails in CI, not at
-        // release time.
+        // Verify the published versions during `check` from the generated POMs, which do not
+        // depend on any artifact: depending on module metadata generation instead would build every
+        // publication artifact, including documentation jars, in every `check`.
+        val verify = project.tasks.register(
+            "verifyPublishedDependencyVersions",
+            VerifyPublishedDependencyVersions::class.java,
+        ) {
+            group = LifecycleBasePlugin.VERIFICATION_GROUP
+            description = "Fails if a generated POM of a Maven publication has a dependency without a version."
+            pomFiles.from(
+                project.files(
+                    project.provider { project.tasks.withType(GenerateMavenPom::class.java).map { it.destination } },
+                ).builtBy(project.tasks.withType(GenerateMavenPom::class.java)),
+            )
+        }
         project.tasks.matching { it.name == "check" }.configureEach {
-            dependsOn(project.tasks.withType(GenerateModuleMetadata::class.java))
+            dependsOn(verify)
         }
     }
 

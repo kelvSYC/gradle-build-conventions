@@ -151,6 +151,116 @@ class GitHubPublishingPluginTest {
         assertTrue(result.output.contains("org.example:versionless"), result.output)
     }
 
+    /**
+     * A publication without a component whose POM is written by hand, like the Kotlin Multiplatform
+     * root publication, which does not honour version mapping: [dependencies] are
+     * `group:artifact[:version]` strings appended to the POM's `dependencies`.
+     */
+    private fun handwrittenPublication(name: String, vararg dependencies: String): String {
+        val appended = dependencies.joinToString("\n") { notation ->
+            val parts = notation.split(':')
+            val version = parts.getOrNull(2)?.let { """dependency.appendNode("version", "$it")""" }.orEmpty()
+            """
+            |        dependencies.appendNode("dependency").let { dependency ->
+            |            dependency.appendNode("groupId", "${parts[0]}")
+            |            dependency.appendNode("artifactId", "${parts[1]}")
+            |            $version
+            |        }
+            """.trimMargin()
+        }
+        return """
+            |publishing.publications.create<MavenPublication>("$name") {
+            |    artifactId = "$name"
+            |    pom.withXml {
+            |        val dependencies = asNode().appendNode("dependencies")
+            |$appended
+            |    }
+            |}
+        """.trimMargin()
+    }
+
+    private val expensiveArtifacts = """
+        |java {
+        |    withJavadocJar()
+        |    withSourcesJar()
+        |}
+    """.trimMargin()
+
+    private fun assertConfigurationCacheReused(result: BuildResult) =
+        assertTrue(result.output.contains("Reusing configuration cache"), result.output)
+
+    @Test
+    fun checkDoesNotBuildPublicationArtifacts() {
+        consumer(buildBody = expensiveArtifacts, origin = "https://github.com/kelvSYC/rifflet.git")
+        val result = build("check", "--dry-run")
+        assertTrue(result.output.contains(":verifyPublishedDependencyVersions"), result.output)
+        assertTrue(result.output.contains(":generatePomFileForMavenPublication"), result.output)
+        for (artifactTask in listOf("jar", "javadocJar", "sourcesJar", "generateMetadataFileForMavenPublication")) {
+            assertFalse(result.output.contains(":$artifactTask "), "$artifactTask in:\n${result.output}")
+        }
+    }
+
+    @Test
+    fun versionedDependenciesPassCheck() {
+        consumer(
+            buildBody = """
+                |dependencies {
+                |    implementation(platform("com.kelvsyc.internal:platform:$conventionsVersion"))
+                |    implementation("org.apache.commons:commons-lang3")
+                |}
+                |
+                |${handwrittenPublication("first", "org.example:one:1.0")}
+                |${handwrittenPublication("second", "org.example:two:2.0")}
+            """.trimMargin(),
+            origin = "https://github.com/kelvSYC/rifflet.git",
+        )
+        val first = build("check")
+        assertTrue(first.task(":verifyPublishedDependencyVersions")?.outcome?.name == "SUCCESS", first.output)
+        assertConfigurationCacheReused(build("check", "--rerun-tasks"))
+    }
+
+    @Test
+    fun versionlessDependencyFailsCheck() {
+        consumer(
+            buildBody = """
+                |${handwrittenPublication("good", "org.example:one:1.0")}
+                |${handwrittenPublication("bad", "org.example:versionless")}
+            """.trimMargin(),
+            origin = "https://github.com/kelvSYC/rifflet.git",
+        )
+        repeat(2) {
+            val result = buildAndFail("check")
+            assertTrue(result.output.contains("com.example:bad:1.0 would publish dependencies without a version"), result.output)
+            assertTrue(result.output.contains("org.example:versionless"), result.output)
+            assertFalse(result.output.contains("com.example:good"), result.output)
+        }
+    }
+
+    @Test
+    fun versionlessDependencyStillFailsModuleMetadataGeneration() {
+        consumer(
+            buildBody = """
+                |val customDependencies = configurations.dependencyScope("customDependencies")
+                |val customElements = configurations.consumable("customElements") {
+                |    extendsFrom(customDependencies.get())
+                |    attributes { attribute(Usage.USAGE_ATTRIBUTE, objects.named("custom-usage")) }
+                |}
+                |(components["java"] as AdhocComponentWithVariants).addVariantsFromConfiguration(customElements.get()) {}
+                |
+                |dependencies {
+                |    implementation("org.apache.commons:commons-lang3:3.17.0")
+                |    "customDependencies"("org.example:versionless")
+                |}
+            """.trimMargin(),
+            origin = "https://github.com/kelvSYC/rifflet.git",
+        )
+        repeat(2) {
+            val result = buildAndFail("generateMetadataFileForMavenPublication")
+            assertTrue(result.output.contains("would publish dependencies without a version"), result.output)
+            assertTrue(result.output.contains("org.example:versionless"), result.output)
+        }
+    }
+
     @Test
     fun noRemoteFailsClearly() {
         consumer()
