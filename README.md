@@ -32,6 +32,8 @@ plugins {
 }
 ```
 
+`check` runs `verifyPomDependencyVersions`, which fails if the generated POM of any Maven publication has a dependency without a version (the internal platform is stripped from the POMs, so versions that only it supplied would otherwise reach consumers unresolvable). It reads the POMs rather than the Gradle module metadata because generating module metadata builds every publication artifact, including documentation jars, which would put them in every `check`. The module metadata check (`RequireDependencyVersions`) still runs whenever module metadata is generated, so `publish` is guarded too.
+
 The settings plugin also registers the shared catalog as `libs`, with the platform BOM at the same version added as `libs.conventions.platform`. The platform is not applied to any configuration: builds that want it declare it themselves (the shared Kotlin convention plugins do this for them):
 
 ```kotlin
