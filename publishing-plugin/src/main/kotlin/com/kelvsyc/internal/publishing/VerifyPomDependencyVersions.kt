@@ -23,7 +23,7 @@ import javax.xml.parsers.DocumentBuilderFactory
  * project are checked, not `<dependencyManagement>`.
  */
 @DisableCachingByDefault(because = "Has no outputs")
-abstract class VerifyPublishedDependencyVersions : DefaultTask() {
+abstract class VerifyPomDependencyVersions : DefaultTask() {
     /** The generated POM files, one per Maven publication. */
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.NONE)

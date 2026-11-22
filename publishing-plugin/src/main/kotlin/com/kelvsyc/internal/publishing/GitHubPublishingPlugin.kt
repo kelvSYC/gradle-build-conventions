@@ -29,7 +29,7 @@ import java.io.File
  *
  * Every Maven publication publishes resolved dependency versions, and the internal platform
  * `com.kelvsyc.internal:platform` is stripped from its POM and Gradle module metadata.
- * [VerifyPublishedDependencyVersions] (`verifyPublishedDependencyVersions`, part of `check`) fails
+ * [VerifyPomDependencyVersions] (`verifyPomDependencyVersions`, part of `check`) fails
  * if a generated POM still has a versionless dependency, without building any publication
  * artifact. [RequireDependencyVersions] does the same for module metadata, which is generated
  * (and built, since it lists every artifact) only when publishing.
@@ -104,8 +104,8 @@ class GitHubPublishingPlugin : Plugin<Project> {
         // depend on any artifact: depending on module metadata generation instead would build every
         // publication artifact, including documentation jars, in every `check`.
         val verify = project.tasks.register(
-            "verifyPublishedDependencyVersions",
-            VerifyPublishedDependencyVersions::class.java,
+            "verifyPomDependencyVersions",
+            VerifyPomDependencyVersions::class.java,
         ) {
             group = LifecycleBasePlugin.VERIFICATION_GROUP
             description = "Fails if a generated POM of a Maven publication has a dependency without a version."
