@@ -57,6 +57,11 @@ jobs:
           # to the shared floors that breaks old consumers fails here.
           - repository: kelvSYC/rifflet
             tasks: ":check consumerCompatibilityTest"
+          # gradle-tools' Gradle daemon must run on JDK 21 (gradle/gradle-daemon-jvm.properties; its detekt needs it),
+          # and those criteria name no download URL, so its build is started from the JDK 21 installed below.
+          - repository: kelvSYC/gradle-tools
+            tasks: ":check"
+            jdk: 21
 
     steps:
       - name: Checkout
@@ -92,5 +97,15 @@ jobs:
           path: consumer
           fetch-depth: 0
           filter: tree:0
+      # A consumer that needs another JDK for its Gradle daemon names it as `jdk`; setup-java exports each installed
+      # JDK as JAVA_HOME_<version>_X64.
       - name: Build the consumer
-        run: .github/scripts/canary.sh consumer "${{ steps.conventions.outputs.version }}" ${{ matrix.consumer.tasks }} --stacktrace
+        env:
+          CONSUMER_JDK: ${{ matrix.consumer.jdk }}
+        run: |
+          if [ -n "$CONSUMER_JDK" ]; then
+            jdk_home_var="JAVA_HOME_${CONSUMER_JDK}_X64"
+            export JAVA_HOME="${!jdk_home_var:?JDK ${CONSUMER_JDK} is not installed in this job}"
+            echo "Building the consumer with JAVA_HOME=${JAVA_HOME}"
+          fi
+          .github/scripts/canary.sh consumer "${{ steps.conventions.outputs.version }}" ${{ matrix.consumer.tasks }} --stacktrace
