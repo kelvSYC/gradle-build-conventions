@@ -19,4 +19,13 @@ dependencyResolutionManagement {
 
 rootProject.name = "gradle-build-conventions"
 
-include("catalog", "platform", "settings-plugin", "publishing-plugin", "kotlin-plugin", "dokka-plugin")
+include(
+    "catalog",
+    "platform",
+    "settings-plugin",
+    "publishing-plugin",
+    "kotlin-common",
+    "kotlin-plugin",
+    "kotlin-gradle-plugin-conventions",
+    "dokka-plugin",
+)

@@ -1,6 +1,6 @@
 # gradle-build-conventions
 
-Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin and Dokka convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
+Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin and Dokka convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
 
 ## Consumer usage
 
@@ -58,6 +58,8 @@ kelvsyc {
 | `com.kelvsyc.internal.kotlin-multiplatform-jvm` | `build.gradle.kts` | The base, plus a `jvm` target released for the floor JVM and tested on it; with Dokka, a javadoc jar (Dokka Javadoc when every target is a JVM target, else Dokka HTML; see Dokka below) |
 | `com.kelvsyc.internal.kotlin-multiplatform-js` | `build.gradle.kts` | The base, plus a Node.js `js` library target with KSP and the Kotest Gradle plugin, and a pinned Node.js |
 | `com.kelvsyc.internal.kotlin-jvm-library` | `build.gradle.kts` | Kotlin JVM library with the same floors and checks, sources jar and Kotest; a `maven` publication with `maven-publish` |
+| `com.kelvsyc.internal.kotlin-gradle-library` | `build.gradle.kts` | Kotlin JVM library compiled against the Gradle API of its Gradle tier (see Gradle-plugin conventions below), with `verifyGradleLinkage`, sources jar, Kotest and mockk-ready tests; a `maven` publication with `maven-publish` |
+| `com.kelvsyc.internal.kotlin-gradle-plugin` | `build.gradle.kts` | The same for Gradle plugins, with `kotlin-dsl` and `java-gradle-plugin` (which publishes the plugin and its markers) |
 | `com.kelvsyc.internal.dokka` | `build.gradle.kts` | Dokka HTML documentation built by `assemble`, linking the JDK, the Kotlin standard library and the sources on GitHub; a javadoc jar of the Dokka Javadoc output for `java` projects that are not Kotlin Multiplatform |
 
 ### Kotlin compatibility floors
@@ -80,7 +82,26 @@ Compiler options set directly in a build script (`kotlin { compilerOptions { ...
 
 The Kotlin Gradle plugin these conventions apply is the compiler, fixed to the catalog's `kotlin`. Builds applying them fail if the applied Kotlin Gradle plugin differs from it, or if another `org.jetbrains.kotlin` artifact on the build script classpath differs from the plugin.
 
-Builds with their own convention plugins that build on the shared Kotlin conventions depend on `libs.conventions.kotlin.plugin` (and `libs.conventions.dokka.plugin` for the Dokka convention), both at the settings plugin's version.
+Builds with their own convention plugins that build on the shared Kotlin conventions depend on `libs.conventions.kotlin.plugin` (and `libs.conventions.dokka.plugin` for the Dokka convention, `libs.conventions.kotlin.gradle.plugin.conventions` for the Gradle-plugin conventions), all at the settings plugin's version. Each alias is `conventions-` followed by the artifact name.
+
+### Gradle-plugin conventions
+
+`com.kelvsyc.internal.kotlin-gradle-library` and `com.kelvsyc.internal.kotlin-gradle-plugin` are for code that runs inside Gradle: Gradle plugins and the libraries they use. Their published code (`main`) is compiled for the oldest Gradle it supports, its tier, declared per build with the Gradle property `com.kelvsyc.gradle.minimumGradle` in the build's `gradle.properties` (a subproject's `gradle.properties` is not read):
+
+| `com.kelvsyc.gradle.minimumGradle` | Tier | Gradle API compiled against | Kotlin standard library and language version of `main` |
+|---|---|---|---|
+| absent or `8.14` | `GRADLE_8_14` | `org.gradle.experimental:gradle-public-api:8.14` | 2.0.21, Kotlin 2.0 |
+| `9.0` | `GRADLE_9_0` | `org.gradle.experimental:gradle-public-api:9.0.0` | 2.2.0, Kotlin 2.2, with `-Xjspecify-annotations=warn` |
+
+Any other value fails the build. The tier is read when the plugin is applied, and is available to build scripts as `kelvsycGradle.tier`. It also sets `org.gradle.plugin.api-version` to the tier's Gradle version on the published variants (unless the build script sets it itself) and on `main`'s compile classpath, and `verifyGradleLinkage` (part of `check`) fails if `main` or its runtime dependencies reference a Gradle or Kotlin standard library class, method or field missing from the tier's Gradle. The Gradle API comes from Gradle's `libs-releases` repository, which the shared settings plugin adds.
+
+The rest does not depend on the tier:
+
+- JDK 21 compiles, with no release override, so the bytecode and the published `org.gradle.jvm.version` are 21; tests run on JDK 21 too.
+- Every compilation but `main`'s uses Kotlin 2.3. The language and API version are set on the compile tasks, so a build script overrides them there (`tasks.named<KotlinCompile>(...)`), not on the `kotlin` extension.
+- Published dependencies exclude `kotlin-stdlib`, `kotlin-stdlib-jdk7`, `kotlin-stdlib-jdk8` and `kotlin-reflect`, which Gradle supplies; the library kind also sets `kotlin.stdlib.default.dependency=false`.
+- Tests get the shared platform, Kotest (`kotest-assertions-core`, `kotest-framework-engine`, `kotest-runner-junit5`) on the JUnit Platform, the Gradle API of the Gradle running the build, and the JVM arguments mockk needs (`-XX:+EnableDynamicAgentLoading`, `-Dnet.bytebuddy.experimental=true`, `-javaagent:` with the `byte-buddy-agent` on the test classpath) plus `--add-opens=java.base/java.lang=ALL-UNNAMED` for `ProjectBuilder`.
+- Dependency Analysis and the Kotlin toolchain checks are those of the Kotlin conventions. The project group is not set.
 
 ### Dokka
 

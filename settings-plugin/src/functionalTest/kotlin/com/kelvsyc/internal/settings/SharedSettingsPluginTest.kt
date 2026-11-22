@@ -218,6 +218,22 @@ class SharedSettingsPluginTest {
     }
 
     @Test
+    fun gradlePluginConventionsAreAvailableFromLibs() {
+        consumer(
+            buildScript = """
+                println("gradle-plugin-conventions=" + libs.conventions.kotlin.gradle.plugin.conventions.get())
+            """.trimIndent(),
+        )
+        val result = build("help")
+        assertTrue(
+            result.output.contains(
+                "gradle-plugin-conventions=com.kelvsyc.internal:kotlin-gradle-plugin-conventions:$conventionsVersion\n",
+            ),
+            result.output,
+        )
+    }
+
+    @Test
     fun groupDefaultsToKelvsyc() {
         consumer(buildScript = """println("group=" + group)""")
         val result = build("help")
