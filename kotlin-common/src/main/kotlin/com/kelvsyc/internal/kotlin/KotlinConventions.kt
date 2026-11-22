@@ -3,7 +3,8 @@ package com.kelvsyc.internal.kotlin
 import java.util.Properties
 
 /**
- * Facts about this release of the shared Kotlin conventions, fixed when the plugins were built.
+ * Facts about this release of the shared Kotlin conventions, fixed when the plugins were built. Shared by the Kotlin
+ * convention plugins and the Gradle-plugin convention plugins.
  */
 object KotlinConventions {
     private val properties: Properties by lazy {

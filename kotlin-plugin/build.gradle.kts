@@ -15,24 +15,11 @@ dependencies {
     // The applied Kotlin Gradle plugin is the compiler version, so it must be exactly the catalog's `kotlin` (Gradle's
     // embedded Kotlin): checkKotlinPluginVersion fails consumer builds otherwise.
     implementation("${libs.kotlin.plugin.get().module}:${libs.versions.kotlin.get()}")
-    implementation(libs.dependency.analysis.plugin)
+    // Dependency Analysis rules, the Kotlin toolchain checks and KotlinConventions (the version and compiler Kotlin
+    // generated into its jar). It brings the Dependency Analysis plugin.
+    api(project(":kotlin-common"))
     implementation(libs.kotest.plugin)
     implementation(libs.ksp.plugin)
-}
-
-// Embeds this build's version and the compiler Kotlin version, so the plugins need nothing from the consumer's catalog.
-val generateKotlinConventionsProperties = tasks.register<WriteProperties>("generateKotlinConventionsProperties") {
-    destinationFile = layout.buildDirectory.file(
-        "generated/kotlinConventions/com/kelvsyc/internal/kotlin/kotlin-conventions.properties",
-    )
-    property("version", project.version.toString())
-    property("kotlin", libs.versions.kotlin.get())
-}
-
-sourceSets.named("main") {
-    resources.srcDir(
-        files(layout.buildDirectory.dir("generated/kotlinConventions")).builtBy(generateKotlinConventionsProperties),
-    )
 }
 
 gradlePlugin {
@@ -81,6 +68,7 @@ testing {
                     ":catalog:publishToMavenLocal",
                     ":platform:publishToMavenLocal",
                     ":settings-plugin:publishToMavenLocal",
+                    ":kotlin-common:publishToMavenLocal",
                     ":kotlin-plugin:publishToMavenLocal",
                 )
                 systemProperty("conventions.version", project.version.toString())
@@ -89,7 +77,7 @@ testing {
                 // sources are declared as inputs: a catalog, platform or plugin change reruns the
                 // tests instead of leaving them up to date.
                 inputs.files(
-                    listOf("catalog", "platform", "settings-plugin", "kotlin-plugin").map { module ->
+                    listOf("catalog", "platform", "settings-plugin", "kotlin-common", "kotlin-plugin").map { module ->
                         rootProject.layout.projectDirectory.dir(module).asFileTree.matching {
                             exclude("build/", ".gradle/", ".kotlin/", "src/*Test/")
                         }

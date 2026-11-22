@@ -63,6 +63,7 @@ testing {
                     ":catalog:publishToMavenLocal",
                     ":platform:publishToMavenLocal",
                     ":settings-plugin:publishToMavenLocal",
+                    ":kotlin-common:publishToMavenLocal",
                     ":kotlin-plugin:publishToMavenLocal",
                     ":dokka-plugin:publishToMavenLocal",
                 )
@@ -74,7 +75,7 @@ testing {
                 // sources are declared as inputs: a catalog, platform or plugin change reruns the
                 // tests instead of leaving them up to date.
                 inputs.files(
-                    listOf("catalog", "platform", "settings-plugin", "kotlin-plugin", "dokka-plugin").map { module ->
+                    listOf("catalog", "platform", "settings-plugin", "kotlin-common", "kotlin-plugin", "dokka-plugin").map { module ->
                         rootProject.layout.projectDirectory.dir(module).asFileTree.matching {
                             exclude("build/", ".gradle/", ".kotlin/", "src/*Test/")
                         }
