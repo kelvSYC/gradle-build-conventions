@@ -1,0 +1,67 @@
+name: Canary
+description: >-
+  Publishes the conventions in the checked-out repository to Maven Local, checks a consumer out and builds it against
+  them (.github/scripts/canary.sh). Run after actions/checkout of this repository; the calling job supplies the
+  GITHUB_ACTOR and GITHUB_TOKEN environment variables and the permissions.
+inputs:
+  repository:
+    description: The consumer repository, as owner/name.
+    required: true
+  tasks:
+    description: The consumer's Gradle tasks and arguments, space separated.
+    required: true
+  jdk:
+    description: >-
+      The JDK version to start the consumer's build with, when its Gradle daemon needs another JDK than the default.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # JDK 25 runs Gradle (last entry becomes the default); 21 builds the plugin modules here; 17 runs consumers'
+    # floor checks (rifflet's consumer compatibility fixture).
+    - name: Set up JDKs 17, 21 and 25
+      uses: actions/setup-java@v6
+      with:
+        java-version: |
+          17
+          21
+          25
+        distribution: 'zulu'
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+    # Before the consumer is checked out: an untracked consumer/ directory would make this version `+dirty`.
+    - name: Publish the conventions to Maven Local
+      id: conventions
+      shell: bash
+      run: |
+        ./gradlew --stacktrace publishToMavenLocal
+        version=$(./gradlew -q properties --property version | sed -n 's/^version: //p')
+        echo "Published ${version}"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+    # Full history: the consumer's version comes from its tags.
+    - name: Checkout the consumer
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ inputs.repository }}
+        path: consumer
+        fetch-depth: 0
+        filter: tree:0
+    # A consumer that needs another JDK for its Gradle daemon names it as `jdk`; setup-java exports each installed
+    # JDK as JAVA_HOME_<version>_X64.
+    - name: Build the consumer
+      shell: bash
+      env:
+        CONSUMER_JDK: ${{ inputs.jdk }}
+        CONVENTIONS_VERSION: ${{ steps.conventions.outputs.version }}
+        CONSUMER_TASKS: ${{ inputs.tasks }}
+      run: |
+        if [ -n "$CONSUMER_JDK" ]; then
+          jdk_home_var="JAVA_HOME_${CONSUMER_JDK}_X64"
+          export JAVA_HOME="${!jdk_home_var:?JDK ${CONSUMER_JDK} is not installed in this job}"
+          echo "Building the consumer with JAVA_HOME=${JAVA_HOME}"
+        fi
+        # Unquoted on purpose: the tasks input is a space-separated list of arguments.
+        # shellcheck disable=SC2086
+        .github/scripts/canary.sh consumer "$CONVENTIONS_VERSION" $CONSUMER_TASKS --stacktrace
