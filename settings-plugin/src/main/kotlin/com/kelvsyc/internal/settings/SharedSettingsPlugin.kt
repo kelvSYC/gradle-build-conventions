@@ -27,9 +27,10 @@ abstract class KelvsycSettingsExtension {
  * repositories of `kelvSYC/gradle-build-conventions` and `kelvSYC/kotlin-tools`), registers the
  * shared catalog published at [SharedConventions.VERSION] as `libs`, and applies the `kelvsyc`
  * extension's group to every project. `libs` also gets the shared platform at that version, as
- * `libs.conventions.platform`, and the shared Kotlin and Dokka convention plugin artifacts, as
- * `libs.conventions.kotlin.plugin` and `libs.conventions.dokka.plugin`, for builds whose own convention plugins
- * depend on them.
+ * `libs.conventions.platform`, and the shared Kotlin, Dokka and Gradle-plugin convention plugin artifacts, as
+ * `libs.conventions.kotlin.plugin`, `libs.conventions.dokka.plugin` and
+ * `libs.conventions.kotlin.gradle.plugin.conventions` (each alias is `conventions-` and the artifact name), for
+ * builds whose own convention plugins depend on them.
  *
  * Plugin requests in exactly the `com.kelvsyc.internal` namespace that carry no version, such as
  * `id("com.kelvsyc.internal.github-publishing")` in a build script, resolve at
@@ -80,6 +81,11 @@ class SharedSettingsPlugin : Plugin<Settings> {
                     .version(SharedConventions.VERSION)
                 library("conventions-dokka-plugin", "com.kelvsyc.internal", "dokka-plugin")
                     .version(SharedConventions.VERSION)
+                library(
+                    "conventions-kotlin-gradle-plugin-conventions",
+                    "com.kelvsyc.internal",
+                    "kotlin-gradle-plugin-conventions",
+                ).version(SharedConventions.VERSION)
             }
         }
 
