@@ -85,6 +85,15 @@ class GradleConventionPluginsTest {
                     |    implementation("org.apache.commons:commons-lang3")
                     |    testImplementation("io.mockk:mockk:$MOCKK_VERSION")
                     |}
+                    |
+                    |// Registered after the convention; its classpath is assigned after the convention configured it.
+                    |tasks.register<Test>("lateTest")
+                    |tasks.named<Test>("lateTest") {
+                    |    classpath = sourceSets.test.get().runtimeClasspath
+                    |    testClassesDirs = sourceSets.test.get().output.classesDirs
+                    |    val label = project.name + ".lateTestJvmArgs="
+                    |    doFirst { println(label + (this as Test).allJvmArgs) }
+                    |}
                     """.trimMargin(),
                 ),
                 "lib814/src/main/kotlin/com/example/Greeter.kt" to """
@@ -206,6 +215,7 @@ class GradleConventionPluginsTest {
                 dir,
                 "check",
                 ":lib90:check",
+                ":lib814:lateTest",
                 ":lib814:generateMetadataFileForMavenPublication",
                 ":lib814:generatePomFileForMavenPublication",
                 ":lib90:generateMetadataFileForMavenPublication",
@@ -413,6 +423,13 @@ class GradleConventionPluginsTest {
             .orEmpty().map { it.readText() }
         assertTrue(reports.any { it.contains("mocks a final class") }, reports.toString())
         assertTrue(reports.none { it.contains("<failure") }, reports.toString())
+    }
+
+    @Test
+    fun byteBuddyAgentFollowsClasspathAssignedLater() {
+        val args = line(kinds.result.output, "lib814.lateTestJvmArgs=")
+        assertTrue(Regex("-javaagent:[^,\\]]*byte-buddy-agent-[^,\\]]*\\.jar").containsMatchIn(args), args)
+        assertEquals(TaskOutcome.SUCCESS, kinds.result.task(":lib814:lateTest")?.outcome)
     }
 
     @Test

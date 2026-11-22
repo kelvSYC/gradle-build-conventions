@@ -15,6 +15,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.util.Properties
+import java.util.concurrent.Callable
 
 /**
  * Configures what both Gradle-plugin kinds share, once the project has `java-library` and the Kotlin JVM plugin, and
@@ -80,7 +81,9 @@ internal fun Project.configureGradleKind(): GradleTier {
         // ByteBuddy only officially supports the JVMs it was released for; experimental mode allows newer ones.
         jvmArgs("-Dnet.bytebuddy.experimental=true")
         // Pre-attach the ByteBuddy agent at JVM startup: dynamic self-attachment is unreliable on newer JVMs.
-        jvmArgumentProviders.add(ByteBuddyAgent(classpath))
+        // The classpath is read lazily: a build script or plugin may assign it after this runs.
+        val test = this
+        jvmArgumentProviders.add(ByteBuddyAgent(objects.fileCollection().from(Callable { test.classpath })))
         // Gradle's ProjectBuilder needs java.lang open for class-loader injection on JDK 25+.
         jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
     }
@@ -111,7 +114,8 @@ private val KOTEST_MODULES = listOf(
 /**
  * `-javaagent` for the ByteBuddy agent on a test [classpath], if it has one (mockk brings it).
  *
- * The classpath is already an input of the test task, so it is not tracked again here.
+ * [classpath] is the test task's classpath, evaluated when the arguments are needed, so a classpath assigned after
+ * the convention configured the task counts. It is already an input of the test task, so it is not tracked again here.
  */
 private class ByteBuddyAgent(@get:Internal val classpath: FileCollection) : CommandLineArgumentProvider {
     override fun asArguments(): Iterable<String> =
