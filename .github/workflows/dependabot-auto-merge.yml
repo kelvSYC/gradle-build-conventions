@@ -5,8 +5,8 @@ on:
 
 # Turns on GitHub auto-merge for Dependabot's grouped catalog PR (the minor and patch updates that dependabot.yml
 # groups), so it merges once the required checks (including the canary) pass and releases through
-# release.yml. Everything else Dependabot opens (majors, pre-1.0 libraries, the Gradle wrapper, GitHub Actions) waits
-# for a person. Auto-merge is enabled with the CONVENTIONS_TOKEN personal access token: a merge made with GITHUB_TOKEN
+# release.yml. Everything else Dependabot opens (majors, pre-1.0 libraries, the Gradle wrapper) waits
+# for a person, except the GitHub Actions bumps that actions-bump.yml handles. Auto-merge is enabled with the CONVENTIONS_TOKEN personal access token: a merge made with GITHUB_TOKEN
 # would trigger no workflows, so nothing would be released. A run started by Dependabot sees only Dependabot secrets,
 # and one started by a person pushing to the PR only Actions secrets, so the token is stored in both.
 jobs:
