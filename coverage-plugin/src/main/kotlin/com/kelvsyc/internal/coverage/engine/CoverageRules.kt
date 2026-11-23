@@ -204,15 +204,27 @@ private fun changeLines(declaration: Declaration, source: List<SourceDeclaration
         }
         else -> {
             val base = baseName(declaration.name)
-            val extent = source.orEmpty().filter { s ->
-                s.owner == owner && own.any { it in s.extent } &&
-                    (s.kind == SourceKind.FUNCTION && s.name == base ||
-                        s.kind == SourceKind.PROPERTY && base in accessorNames(s.name))
-            }.minByOrNull { it.extent.last - it.extent.first }?.extent
+            val enclosing = source.orEmpty().filter { s -> s.owner == owner && own.any { it in s.extent } }
+            val named = enclosing.filter { it.compilesTo(base) }
+            // A declaration whose name could not be read: the innermost function or property around the method.
+            val unnamed = enclosing.filter { it.name == null && (it.kind == SourceKind.FUNCTION || isAccessor(base)) }
+            val extent = named.ifEmpty { unnamed }.minByOrNull { it.extent.last - it.extent.first }?.extent
             own + (extent ?: declaration.lines)
         }
     }
 }
+
+/** True when a method named [base] (see [baseName]) is compiled from this function or one of this property's accessors. */
+private fun SourceDeclaration.compilesTo(base: String): Boolean = when (kind) {
+    SourceKind.FUNCTION -> base == name || base in jvmNames
+    SourceKind.PROPERTY -> name != null && base in accessorNames(name) || base in jvmNames
+    else -> false
+}
+
+private val ACCESSOR = Regex("""(?:get|set|is)[A-Z_].*""")
+
+/** True when [base] has the form of a property accessor's name. */
+private fun isAccessor(base: String): Boolean = ACCESSOR.matches(base)
 
 /** The lines and declarations [target] exempts among a file's [declarations], given its [source] declarations. */
 private fun exempted(
@@ -224,17 +236,18 @@ private fun exempted(
         is MarkerTarget.Line -> setOf(target.line) to emptyList()
         is MarkerTarget.Block -> target.lines.toSet() to emptyList()
         is MarkerTarget.Function -> {
+            val declared = source.firstOrNull {
+                it.kind == SourceKind.FUNCTION && it.owner == target.owner && it.line == target.line
+            }
+            val names = setOf(target.name) + declared?.jvmNames.orEmpty()
             val methods = declarations.filter {
-                ownerName(it) == target.owner && baseName(it.name) == target.name &&
+                ownerName(it) == target.owner && baseName(it.name) in names &&
                     it.lines.first >= target.line && it.lines.first < target.until
             }
             // Classes generated inside the function (anonymous objects, local classes): named after it, and within its
             // source extent, else within its own lines.
             val prefix = "${target.owner}$${target.name}$"
-            val span = source.firstOrNull {
-                it.kind == SourceKind.FUNCTION && it.owner == target.owner && it.name == target.name &&
-                    it.line == target.line
-            }?.let { it.line..it.extent.last }
+            val span = declared?.let { it.line..it.extent.last }
                 ?: methods.flatMap { it.ownLines }.let { own -> if (own.isEmpty()) IntRange.EMPTY else own.min()..own.max() }
             val generated = declarations.filter { d -> ownerName(d).startsWith(prefix) && d.ownLines.all { it in span } }
             val all = methods + generated
@@ -250,7 +263,10 @@ private fun exempted(
             constructors.flatMap { it.ownLines }.filter { it in target.lines }.toSet() to constructors
         }
         is MarkerTarget.Property -> {
-            val names = accessorNames(target.name)
+            val declared = source.firstOrNull {
+                it.kind == SourceKind.PROPERTY && it.owner == target.owner && it.line == target.line
+            }
+            val names = accessorNames(target.name) + declared?.jvmNames.orEmpty()
             val accessors = declarations.filter {
                 ownerName(it) == target.owner && baseName(it.name) in names &&
                     it.lines.first >= target.line && it.lines.first < target.until

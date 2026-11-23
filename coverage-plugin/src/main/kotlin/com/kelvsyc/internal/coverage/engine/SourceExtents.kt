@@ -79,15 +79,20 @@ internal enum class SourceKind { FUNCTION, PROPERTY, CONSTRUCTOR, CLASS }
  * class's own path. [line] holds its keyword. [extent] runs from its first annotation (excluding any KDoc) to its
  * last line: the closing brace of a block body, or the last line of an expression body, initializer or accessor.
  * [header] is a class's keyword line through the line that opens its body, which holds the primary constructor.
+ * [name] is null when it cannot be read from the declaration's first line. [jvmNames] are the names its `@JvmName`,
+ * `@get:JvmName` and `@set:JvmName` annotations give its method or accessors.
  */
 internal data class SourceDeclaration(
     val kind: SourceKind,
-    val name: String,
+    val name: String?,
     val owner: String,
     val line: Int,
     val extent: IntRange,
     val header: IntRange = IntRange.EMPTY,
+    val jvmNames: Set<String> = emptySet(),
 )
+
+private val JVM_NAME_ANNOTATION = Regex("""@(?:(?:get|set):)?(?:kotlin\.jvm\.)?JvmName\(\s*"([^"]+)"\s*\)""")
 
 /**
  * The member and top-level declarations of the Kotlin source [text] of [file]: classes, functions, properties and
@@ -124,21 +129,26 @@ internal fun scanSourceDeclarations(file: String, text: String): List<SourceDecl
         val first = annotationStart ?: index
         annotationStart = null
         val start = declarationStart(rest) ?: continue
-        val name = start.name ?: continue
+        val name = start.name
+        if (name == null && start.keyword !in FUNCTION_KEYWORDS && start.keyword !in PROPERTY_KEYWORDS) continue
         val scope = enclosingClasses(lines, index)
         if (scope.local) continue
         val owner = scope.path.joinToString("$").ifEmpty { facade }
         val number = index + 1
         val extent = first + 1..declarationEnd(masked, index)
         when (start.keyword) {
-            in CLASS_KEYWORDS -> {
+            in CLASS_KEYWORDS -> if (name != null) {
                 val path = (scope.path + name).joinToString("$")
                 val header = number..headerEnd(masked.code, index, extent.last)
                 result.add(SourceDeclaration(SourceKind.CLASS, name, path, number, extent, header))
             }
             "constructor" -> result.add(SourceDeclaration(SourceKind.CONSTRUCTOR, name, owner, number, extent))
-            in FUNCTION_KEYWORDS -> result.add(SourceDeclaration(SourceKind.FUNCTION, name, owner, number, extent))
-            in PROPERTY_KEYWORDS -> result.add(SourceDeclaration(SourceKind.PROPERTY, name, owner, number, extent))
+            in FUNCTION_KEYWORDS, in PROPERTY_KEYWORDS -> {
+                val kind = if (start.keyword in FUNCTION_KEYWORDS) SourceKind.FUNCTION else SourceKind.PROPERTY
+                val annotations = lines.subList(first, index + 1).joinToString("\n")
+                val jvmNames = JVM_NAME_ANNOTATION.findAll(annotations).map { it.groupValues[1] }.toSet()
+                result.add(SourceDeclaration(kind, name, owner, number, extent, jvmNames = jvmNames))
+            }
         }
     }
     return result

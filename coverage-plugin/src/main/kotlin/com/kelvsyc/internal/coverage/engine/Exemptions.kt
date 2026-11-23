@@ -80,9 +80,6 @@ private val DECLARATION = Regex(
     """^\s*(?:(?:$MODIFIERS|$ANNOTATION)\s+)*""" +
         """(fun\s+interface|fun|val|var|class|interface|object|constructor|init|typealias)\b(.*)$""",
 )
-private const val RECEIVER = """(?:[\w<>?,.]+\.)?"""
-private val FUNCTION_NAME = Regex("""^\s*(?:<[^>]*>\s*)?$RECEIVER`?([A-Za-z_]\w*)`?\s*\(""")
-private val PROPERTY_NAME = Regex("""^\s*(?:<[^>]*>\s*)?$RECEIVER`?([A-Za-z_]\w*)`?""")
 private val CLASS_NAME = Regex("""^\s*`?([A-Za-z_]\w*)`?""")
 internal val CLASS_KEYWORDS = setOf("class", "interface", "object", "fun interface")
 internal val FUNCTION_KEYWORDS = setOf("fun")
@@ -100,12 +97,78 @@ internal fun declarationStart(code: String): DeclarationStart? {
     val name = when (keyword) {
         in CLASS_KEYWORDS -> CLASS_NAME.find(rest)?.groupValues?.get(1)
             ?: COMPANION_NAME.takeIf { "companion" in code.substring(0, match.groups[1]!!.range.first) }
-        "fun" -> FUNCTION_NAME.find(rest)?.groupValues?.get(1)
+        "fun", in PROPERTY_KEYWORDS -> memberName(rest)
         "constructor" -> CONSTRUCTOR_NAME
-        in PROPERTY_KEYWORDS -> PROPERTY_NAME.find(rest)?.groupValues?.get(1)
         else -> null
     }
     return DeclarationStart(keyword, name)
+}
+
+/**
+ * The name of the function or property whose declaration continues with [rest] (the text after `fun`, `val` or
+ * `var`): after an optional type parameter list, and an optional receiver type followed by `.`. Null when the name is
+ * not on this line or the text is not a named declaration (such as a destructuring declaration).
+ */
+private fun memberName(rest: String): String? {
+    var i = skipSpaces(rest, 0)
+    if (rest.startsWith("<", i)) i = skipSpaces(rest, skipBalanced(rest, i) ?: return null)
+    while (i < rest.length) {
+        if (rest[i] == '(') {
+            // A parenthesised receiver type, such as a function type: `(() -> Unit).name`.
+            i = skipSpaces(rest, skipBalanced(rest, i) ?: return null)
+            if (rest.startsWith("?", i)) i = skipSpaces(rest, i + 1)
+            if (!rest.startsWith(".", i)) return null
+            i = skipSpaces(rest, i + 1)
+            continue
+        }
+        val end = identifierEnd(rest, i) ?: return null
+        val name = rest.substring(i, end).removeSurrounding("`")
+        i = skipSpaces(rest, end)
+        if (rest.startsWith("<", i)) i = skipSpaces(rest, skipBalanced(rest, i) ?: return null)
+        else if (!rest.startsWith("?", i) && !rest.startsWith(".", i)) return name
+        if (rest.startsWith("?", i)) i = skipSpaces(rest, i + 1)
+        // Past type arguments or `?`, the identifier was part of a receiver type, which `.` must end.
+        if (!rest.startsWith(".", i)) return null
+        i = skipSpaces(rest, i + 1)
+    }
+    return null
+}
+
+private fun skipSpaces(text: String, start: Int): Int {
+    var i = start
+    while (i < text.length && text[i].isWhitespace()) i++
+    return i
+}
+
+/** The index after the identifier (plain or backticked) at [start] of [text], or null if none starts there. */
+private fun identifierEnd(text: String, start: Int): Int? {
+    if (start >= text.length) return null
+    if (text[start] == '`') return text.indexOf('`', start + 1).takeIf { it > start + 1 }?.plus(1)
+    if (!text[start].isLetter() && text[start] != '_') return null
+    var i = start + 1
+    while (i < text.length && (text[i].isLetterOrDigit() || text[i] == '_')) i++
+    return i
+}
+
+/**
+ * The index after the bracketed group (`<…>` or `(…)`) opening at [start] of [text], nesting both kinds and ignoring
+ * the `>` of `->`; null when the group is not closed on this line.
+ */
+private fun skipBalanced(text: String, start: Int): Int? {
+    var depth = 0
+    var i = start
+    while (i < text.length) {
+        when {
+            text.startsWith("->", i) -> i++
+            text[i] == '<' || text[i] == '(' -> depth++
+            text[i] == '>' || text[i] == ')' -> {
+                depth--
+                if (depth == 0) return i + 1
+            }
+        }
+        i++
+    }
+    return null
 }
 
 /** Scans [text] of [file] for exemption markers, returning the valid ones and the reasonless ones. */

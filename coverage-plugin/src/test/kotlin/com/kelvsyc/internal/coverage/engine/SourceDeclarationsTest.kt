@@ -93,4 +93,13 @@ class SourceDeclarationsTest {
         assertEquals(listOf("val a = \" \"     ", "            ", "     x", "\"\"\"", " ", "\"\"\" + y"), masked.code)
         assertEquals(listOf(false, false, false, false, true, true), masked.continued)
     }
+
+    @Test
+    fun namesFollowTypeParametersAndReceivers() {
+        val names = listOf(
+            "fun <T : Comparable<T>> a(x: T)", "fun kotlin.String.b()", "fun String?.c()", "fun (suspend () -> Unit)?.d()",
+            "fun <K, V> Map<K, List<V>>.e()", "val <T> List<T>.f: Int", "fun `g h`()", "val (i, j) = pair", "fun <T> T.",
+        ).map { declarationStart(it)?.name }
+        assertEquals(listOf("a", "b", "c", "d", "e", "f", "g h", null, null), names)
+    }
 }
