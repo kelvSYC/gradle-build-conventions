@@ -24,6 +24,7 @@ include(
     "platform",
     "settings-plugin",
     "publishing-plugin",
+    "coverage-plugin",
     "kotlin-common",
     "kotlin-plugin",
     "kotlin-gradle-plugin-conventions",
