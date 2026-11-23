@@ -168,23 +168,52 @@ private fun exempted(target: MarkerTarget, declarations: List<Declaration>): Pai
     when (target) {
         is MarkerTarget.Line -> setOf(target.line) to emptyList()
         is MarkerTarget.Block -> target.lines.toSet() to emptyList()
-        is MarkerTarget.Property -> setOf(target.line) to declarations.filter { it.lines.first == target.line }
         is MarkerTarget.Function -> {
-            val firstLine = declarations.filter { it.lines.first >= target.line }.minOfOrNull { it.lines.first }
-            val main = declarations.filter { it.lines.first == firstLine }
-            val last = main.maxOfOrNull { it.lines.last }
-            if (firstLine == null || last == null) {
-                setOf(target.line) to emptyList()
-            } else {
-                val inside = declarations.filter { it.lines.first >= firstLine && it.lines.last <= last }
-                (target.line..last).toSet() to (main + inside).distinct()
+            val methods = declarations.filter {
+                baseName(it.name) == target.name && it.lines.first >= target.line && it.lines.first < target.until
             }
+            val first = methods.minOfOrNull { it.lines.first }
+            val last = methods.maxOfOrNull { it.lines.last }
+            val inside = if (first == null || last == null) {
+                emptyList()
+            } else {
+                declarations.filter { it.lines.first >= first && it.lines.last <= last }
+            }
+            val all = (methods + inside).distinct()
+            (setOf(target.line) + all.flatMap { it.lines }) to all
+        }
+        is MarkerTarget.Property -> {
+            val names = accessorNames(target.name)
+            val accessors = declarations.filter {
+                baseName(it.name) in names && it.lines.first >= target.line && it.lines.first < target.until
+            }
+            (setOf(target.line) + accessors.flatMap { it.lines }) to accessors
         }
         is MarkerTarget.Class -> {
-            val members = declarations.filter { target.name in it.className.substringAfterLast('/').split('$') }
+            val simpleName = target.path.substringAfterLast('$')
+            val members = declarations.filter {
+                val name = it.className.substringAfterLast('/')
+                if (target.local) {
+                    simpleName in name.split('$')
+                } else {
+                    name == target.path || name.startsWith(target.path + "$")
+                }
+            }
             (setOf(target.line) + members.flatMap { it.lines }) to members
         }
     }
+
+/** A method name without the suffixes the Kotlin compiler mangles into it (`$module`, `-hash`, `$default`). */
+private fun baseName(name: String): String = name.substringBefore('$').substringBefore('-')
+
+/** The base names of property [name]'s accessors and of the code its delegate runs. */
+private fun accessorNames(name: String): Set<String> {
+    val isProperty = name.length > 2 && name.startsWith("is") && name[2].isUpperCase()
+    val capitalised = name.replaceFirstChar { it.uppercaseChar() }
+    val getter = if (isProperty) name else "get$capitalised"
+    val setter = if (isProperty) "set" + name.removePrefix("is") else "set$capitalised"
+    return setOf(getter, setter, "${name}_delegate")
+}
 
 private fun lineRanges(lines: Set<Int>): List<String> {
     val result = mutableListOf<String>()

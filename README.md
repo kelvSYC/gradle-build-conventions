@@ -156,12 +156,13 @@ The changes are the working tree, including uncommitted and untracked files, aga
 
 To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests, though it still compiles the main classes. Without any execution data the check reports that no test executed the project's code, rather than reading an earlier report.
 
-Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. At the end of a line, the marker exempts that line (and a declaration whose code starts on it). Alone on a line, it exempts what the next line of code starts, skipping blank lines, comments and annotations:
+Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. A marker alone on a line applies to the next line of code, skipping blank lines, comments and lines holding only annotations (including annotations whose arguments span several lines); a marker at the end of a line applies to that line. It exempts what that line declares:
 
-- a `class`, `interface` or `object`: all of its members, constructors and nested classes;
-- a `fun` or `constructor`: that function, including its lambdas and local functions;
+- a `class`, `interface` or `object` (annotations and modifiers may precede it on the same line): all of its members, constructors and nested classes. A `companion object` or nested class is matched within the class that encloses it, found by indentation, so it never exempts another class's companion or a same-named nested class; a class declared inside a function is matched by its simple name within the file;
+- a `fun` or `constructor`: that function's code, matched by name (ignoring the suffixes the compiler adds for `internal` functions, value-class parameters and default arguments), including its lambdas and local functions. A function without a body, such as an `abstract fun`, has no code to exempt; the marker never moves on to the next function, nor to another overload of the same name;
+- a property (`val` or `var`): that line and the property's accessors and delegate code, such as a getter on a later line or a `by lazy { }` block. A local `val` or `var` has no accessors, so only its line is exempted, never the enclosing function;
 - an `init` block: the block's lines;
-- anything else, including a `val` or `var` (which may be local): that line only.
+- anything else: that line only.
 
 ```kotlin
 // coverage-exempt: unreachable, the caller validates the input
