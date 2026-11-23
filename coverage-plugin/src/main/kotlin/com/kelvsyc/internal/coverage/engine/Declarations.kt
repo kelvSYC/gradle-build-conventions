@@ -6,14 +6,12 @@ import kotlin.metadata.KmConstructor
 import kotlin.metadata.KmFunction
 import kotlin.metadata.KmProperty
 import kotlin.metadata.KmPropertyAccessorAttributes
-import kotlin.metadata.MemberKind
 import kotlin.metadata.Visibility
 import kotlin.metadata.isInline
 import kotlin.metadata.jvm.KotlinClassMetadata
 import kotlin.metadata.jvm.getterSignature
 import kotlin.metadata.jvm.setterSignature
 import kotlin.metadata.jvm.signature
-import kotlin.metadata.kind
 import kotlin.metadata.visibility
 import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.ClassReader
@@ -25,7 +23,9 @@ import org.objectweb.asm.Opcodes
  * A method with line information in a compiled class.
  *
  * [className] is a JVM internal name and [sourceFile] is keyed as in [JacocoXmlReport.lines]. [lines] spans the
- * method's line number table. [publicApi] is true for public or protected members of publicly reachable classes
+ * method's own source lines: line number table entries that the class's SMAP (`SourceDebugExtension`) maps from
+ * inlined code are ignored, since inlining places those at synthetic lines that may overlap other declarations.
+ * [publicApi] is true for public or protected members of publicly reachable classes
  * that are not compiler-synthesized; [inline] is true for Kotlin `inline` functions and property accessors.
  */
 data class Declaration(
@@ -116,18 +116,16 @@ private fun packageMembers(functions: List<KmFunction>, properties: List<KmPrope
     val map = linkedMapOf<String, MemberInfo>()
     for (fn in functions) {
         val sig = fn.signature ?: continue
-        map[sig.name + sig.descriptor] = MemberInfo(fn.visibility.isApi() && fn.kind != MemberKind.SYNTHESIZED, fn.isInline)
+        map[sig.name + sig.descriptor] = MemberInfo(fn.visibility.isApi(), fn.isInline)
     }
     for (prop in properties) {
-        val synthesized = prop.kind == MemberKind.SYNTHESIZED
-        prop.getterSignature?.let { map[it.name + it.descriptor] = accessor(prop.getter, synthesized) }
-        prop.setterSignature?.let { sig -> prop.setter?.let { map[sig.name + sig.descriptor] = accessor(it, synthesized) } }
+        prop.getterSignature?.let { map[it.name + it.descriptor] = accessor(prop.getter) }
+        prop.setterSignature?.let { sig -> prop.setter?.let { map[sig.name + sig.descriptor] = accessor(it) } }
     }
     return map
 }
 
-private fun accessor(attributes: KmPropertyAccessorAttributes, synthesized: Boolean) =
-    MemberInfo(attributes.visibility.isApi() && !synthesized, attributes.isInline)
+private fun accessor(attributes: KmPropertyAccessorAttributes) = MemberInfo(attributes.visibility.isApi(), attributes.isInline)
 
 private fun isReachable(cls: ClassInfo, parsed: ParsedMetadata?, classes: Map<String, ClassInfo>): Boolean {
     val selfVisible = parsed?.selfVisible
@@ -141,6 +139,7 @@ private fun readClass(file: File): ClassInfo {
     var name = ""
     var access = 0
     var sourceFile: String? = null
+    var inlined: List<IntRange> = emptyList()
     var innerAccess: Int? = null
     var outerName: String? = null
     var metadata: Metadata? = null
@@ -154,6 +153,7 @@ private fun readClass(file: File): ClassInfo {
 
         override fun visitSource(source: String?, debug: String?) {
             sourceFile = source
+            inlined = inlinedRanges(debug)
         }
 
         override fun visitInnerClass(n: String, outer: String?, inner: String?, acc: Int) {
@@ -175,6 +175,7 @@ private fun readClass(file: File): ClassInfo {
                 var max = Int.MIN_VALUE
 
                 override fun visitLineNumber(line: Int, start: org.objectweb.asm.Label) {
+                    if (inlined.any { line in it }) return
                     if (line < min) min = line
                     if (line > max) max = line
                 }
@@ -187,6 +188,39 @@ private fun readClass(file: File): ClassInfo {
     }
     ClassReader(file.readBytes()).accept(visitor, ClassReader.SKIP_FRAMES)
     return ClassInfo(name, access, sourceFile, methods, innerAccess, outerName, metadata)
+}
+
+private const val OWN_FILE_ID = 1
+private val SMAP_LINE = Regex("""(\d+)(?:#(\d+))?(?:,(\d+))?:(\d+)(?:,(\d+))?""")
+
+/**
+ * Output line ranges of the `Kotlin` stratum in the SMAP [debug] that are not the class's own source.
+ *
+ * Own lines are the entries mapping the class's own file (id 1) onto the same line numbers; every other entry,
+ * including inline functions from the same file, which are mapped to synthetic line numbers, is inlined code.
+ */
+private fun inlinedRanges(debug: String?): List<IntRange> {
+    if (debug == null) return emptyList()
+    val ranges = mutableListOf<IntRange>()
+    var stratum = ""
+    var inLines = false
+    var fileId = OWN_FILE_ID
+    for (line in debug.lineSequence()) {
+        when {
+            line.startsWith("*S ") -> { stratum = line.removePrefix("*S ").trim(); inLines = false }
+            line == "*L" -> inLines = true
+            line.startsWith("*") -> inLines = false
+            inLines && stratum == "Kotlin" -> {
+                val m = SMAP_LINE.matchEntire(line.trim()) ?: continue
+                val (input, file, repeat, output, increment) = m.destructured
+                if (file.isNotEmpty()) fileId = file.toInt()
+                val count = (if (repeat.isEmpty()) 1 else repeat.toInt()) * (if (increment.isEmpty()) 1 else increment.toInt())
+                val start = output.toInt()
+                if (fileId != OWN_FILE_ID || input.toInt() != start) ranges.add(start until start + count)
+            }
+        }
+    }
+    return ranges
 }
 
 private class MetadataCollector(private val onDone: (Metadata) -> Unit) : AnnotationVisitor(ASM_API) {

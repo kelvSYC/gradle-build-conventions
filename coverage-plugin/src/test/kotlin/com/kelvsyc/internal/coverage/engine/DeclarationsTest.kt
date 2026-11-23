@@ -34,11 +34,11 @@ class DeclarationsTest {
     }
 
     @Test
-    fun dataClassSynthesizedMembersAreNotPublicApi() {
-        val synthesized = setOf("copy", "copy\$default", "component1", "toString", "hashCode", "equals")
-        assertTrue(declarations.none { it.className == "fixtures/D" && it.name in synthesized && it.publicApi })
-        assertTrue(find("fixtures/D", "getA").publicApi)
-        assertTrue(find("fixtures/D", "<init>").publicApi)
+    fun dataClassEmitsOnlyDeclaredMembers() {
+        // The compiler gives copy/componentN/equals/hashCode/toString no LineNumberTable, so they are never scanned.
+        val emitted = declarations.filter { it.className == "fixtures/D" }
+        assertEquals(setOf("<init>", "getA"), emitted.map { it.name }.toSet())
+        assertTrue(emitted.all { it.publicApi })
     }
 
     @Test
@@ -73,5 +73,11 @@ class DeclarationsTest {
     fun linesSpanTheMethodBody() {
         val d = find("fixtures/TopLevelKt", "spans")
         assertEquals(2, d.lines.last - d.lines.first)
+    }
+
+    @Test
+    fun inlinedCodeDoesNotInflateLines() {
+        val d = find("fixtures/InliningKt", "callsInline")
+        assertEquals(9..12, d.lines)
     }
 }
