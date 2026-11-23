@@ -5,6 +5,10 @@ version: 2
 updates:
   - package-ecosystem: gradle
     directory: /
+    # Every merge releases to every consumer, so a library release must be a few days old before it is proposed:
+    # a release that is pulled or quickly followed by a fix never reaches the consumers.
+    cooldown:
+      default-days: 3
     # Weekly: each merge releases and becomes a bump in every consumer, so updates arrive as a weekly digest.
     schedule:
       interval: weekly
