@@ -16,8 +16,11 @@ sealed interface MarkerTarget {
     data class Function(val line: Int, val name: String, val owner: String, val until: Int = Int.MAX_VALUE) :
         MarkerTarget
 
-    /** The secondary constructor of class [owner] declared over [lines]: the owner's constructors that run them. */
-    data class Constructor(val lines: IntRange, val owner: String) : MarkerTarget
+    /**
+     * The secondary constructor of class [owner] declared over [lines]: the owner's constructors, other than the
+     * primary one (which runs the class [header] line), that run those lines, and only those lines.
+     */
+    data class Constructor(val lines: IntRange, val owner: String, val header: Int) : MarkerTarget
 
     /**
      * The property [name] declared on [line] in the class [owner] (as for [Function]): that line, and the owner's
@@ -29,10 +32,17 @@ sealed interface MarkerTarget {
 
     /**
      * The class, interface or object declared on [line], with its members and nested classes. [path] is its name
-     * nested in its enclosing classes, joined with `$` (`Outer$Companion`); for a [local] class, declared inside a
-     * function, only its simple name (the last segment of [path]) is matched.
+     * nested in its enclosing classes, joined with `$` (`Outer$Companion`). A [local] class, declared inside a
+     * function, has its simple name as [path]: it matches classes of [owner] (`Owner$function$Name`) with that name
+     * whose code lies within the function's lines, [span].
      */
-    data class Class(val line: Int, val path: String, val local: Boolean = false) : MarkerTarget
+    data class Class(
+        val line: Int,
+        val path: String,
+        val local: Boolean = false,
+        val owner: String = "",
+        val span: IntRange = IntRange.EMPTY,
+    ) : MarkerTarget
 
     /** The [lines] of a block, such as an `init` block. */
     data class Block(val lines: IntRange) : MarkerTarget
@@ -223,11 +233,14 @@ private fun targetOf(source: Source, index: Int, code: String): MarkerTarget {
     return when {
         start.keyword == "init" -> MarkerTarget.Block(number..blockEnd(lines, index))
         name == null -> MarkerTarget.Line(number)
-        start.keyword in CLASS_KEYWORDS ->
-            MarkerTarget.Class(number, (scope.path + name).joinToString("$"), scope.local)
-        start.keyword == "constructor" -> {
+        start.keyword in CLASS_KEYWORDS && scope.functionLine != null -> {
+            val function = scope.functionLine
+            MarkerTarget.Class(number, name, true, owner, function + 1..blockEnd(lines, function))
+        }
+        start.keyword in CLASS_KEYWORDS -> MarkerTarget.Class(number, (scope.path + name).joinToString("$"))
+        start.keyword == "constructor" && scope.classLine != null -> {
             val end = if ('{' in code) blockEnd(lines, index) else number
-            MarkerTarget.Constructor(number..end, owner)
+            MarkerTarget.Constructor(number..end, owner, scope.classLine + 1)
         }
         start.keyword == "fun" ->
             MarkerTarget.Function(number, name, owner, nextDeclaration(lines, index, FUNCTION_KEYWORDS, name))
@@ -249,8 +262,11 @@ private fun nextDeclaration(lines: List<String>, index: Int, keywords: Set<Strin
 private fun indentOf(line: String): Int =
     line.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) line.length else it }
 
-/** The classes enclosing a declaration, outermost first; [local] when a function encloses it. */
-private class Scope(val path: List<String>, val local: Boolean)
+/**
+ * The classes enclosing a declaration, outermost first; [local] when a function encloses it. [functionLine] is the
+ * innermost enclosing function's line and [classLine] the innermost enclosing class's line (0-based), when present.
+ */
+private class Scope(val path: List<String>, val local: Boolean, val functionLine: Int?, val classLine: Int?)
 
 /**
  * The classes enclosing line [index] (0-based): each enclosing declaration is the nearest preceding declaration
@@ -259,6 +275,8 @@ private class Scope(val path: List<String>, val local: Boolean)
 private fun enclosingClasses(lines: List<String>, index: Int): Scope {
     val path = mutableListOf<String>()
     var local = false
+    var functionLine: Int? = null
+    var classLine: Int? = null
     var indent = indentOf(lines[index])
     var current = index
     while (indent > 0) {
@@ -270,11 +288,17 @@ private fun enclosingClasses(lines: List<String>, index: Int): Scope {
                 declarationStart(stripAnnotations(line).first) != null
         } ?: break
         val start = declarationStart(stripAnnotations(lines[parent]).first)!!
-        if (start.keyword in CLASS_KEYWORDS && start.name != null) path.add(0, start.name) else local = true
+        if (start.keyword in CLASS_KEYWORDS && start.name != null) {
+            path.add(0, start.name)
+            if (classLine == null) classLine = parent
+        } else {
+            local = true
+            if (functionLine == null) functionLine = parent
+        }
         indent = indentOf(lines[parent])
         current = parent
     }
-    return Scope(path, local)
+    return Scope(path, local, functionLine, classLine)
 }
 
 /**

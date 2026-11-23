@@ -22,9 +22,11 @@ import org.objectweb.asm.Opcodes
 /**
  * A method with line information in a compiled class.
  *
- * [className] is a JVM internal name and [sourceFile] is keyed as in [JacocoXmlReport.lines]. [lines] spans the
- * method's own source lines: line number table entries that the class's SMAP (`SourceDebugExtension`) maps from
- * inlined code are ignored, since inlining places those at synthetic lines that may overlap other declarations.
+ * [className] is a JVM internal name and [sourceFile] is keyed as in [JacocoXmlReport.lines]. [ownLines] are the
+ * method's own source lines, from its line number table, and [lines] spans them. Entries that the class's SMAP
+ * (`SourceDebugExtension`) maps from inlined code are ignored, since inlining places those at synthetic lines that
+ * may overlap other declarations. A constructor's own lines include the property initializers it runs, so [lines] can
+ * span other methods; decide which lines belong to a declaration from [ownLines].
  * [publicApi] is true for public or protected members of publicly reachable classes
  * that are not compiler-synthesized; [inline] is true for Kotlin `inline` functions and property accessors.
  */
@@ -36,6 +38,7 @@ data class Declaration(
     val lines: IntRange,
     val publicApi: Boolean,
     val inline: Boolean,
+    val ownLines: Set<Int> = lines.toSet(),
 )
 
 private const val METADATA_DESC = "Lkotlin/Metadata;"
@@ -44,7 +47,7 @@ private const val NOT_MEMBER = 0
 
 private class MemberInfo(val publicApi: Boolean, val inline: Boolean)
 
-private class MethodInfo(val name: String, val desc: String, val access: Int, val lines: IntRange)
+private class MethodInfo(val name: String, val desc: String, val access: Int, val lines: Set<Int>)
 
 private class ClassInfo(
     val name: String,
@@ -77,7 +80,8 @@ fun scanDeclarations(classDirs: List<File>): List<Declaration> {
                 m.access and (Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == NOT_MEMBER
             val member = members?.get(m.name + m.desc)
             val publicApi = reachable && jvmVisible && (if (members == null) true else member?.publicApi == true)
-            result.add(Declaration(cls.name, m.name, m.desc, key, m.lines, publicApi, member?.inline == true))
+            val range = m.lines.min()..m.lines.max()
+            result.add(Declaration(cls.name, m.name, m.desc, key, range, publicApi, member?.inline == true, m.lines))
         }
     }
     return result
@@ -171,17 +175,14 @@ private fun readClass(file: File): ClassInfo {
             acc: Int, n: String, desc: String, signature: String?, exceptions: Array<out String>?,
         ): MethodVisitor {
             return object : MethodVisitor(ASM_API) {
-                var min = Int.MAX_VALUE
-                var max = Int.MIN_VALUE
+                val lines = sortedSetOf<Int>()
 
                 override fun visitLineNumber(line: Int, start: org.objectweb.asm.Label) {
-                    if (inlined.any { line in it }) return
-                    if (line < min) min = line
-                    if (line > max) max = line
+                    if (inlined.none { line in it }) lines.add(line)
                 }
 
                 override fun visitEnd() {
-                    if (min <= max) methods.add(MethodInfo(n, desc, acc, min..max))
+                    if (lines.isNotEmpty()) methods.add(MethodInfo(n, desc, acc, lines))
                 }
             }
         }

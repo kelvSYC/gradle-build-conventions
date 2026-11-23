@@ -112,7 +112,7 @@ fun evaluate(
         exemptedLines.getOrPut(key) { mutableSetOf() }.addAll(lines)
         exemptedDeclarations.addAll(targets)
         val changedLines = measuredChanged[key]?.second.orEmpty()
-        val touched = lines.any { it in changedLines } || targets.any { t -> t.lines.any { it in changedLines } }
+        val touched = lines.any { it in changedLines } || targets.any { t -> t.ownLines.any { it in changedLines } }
         if (touched) affectingExemptions.add(exemption)
     }
 
@@ -129,12 +129,12 @@ fun evaluate(
         repoPaths[key] = path
         changedMeasuredLines += changedLines.size
         if (key !in report.lines && declarationsByKey[key].orEmpty().isNotEmpty()) withoutData.add(path)
-        val fileDeclarations = declarationsByKey[key].orEmpty().filter { d -> d.lines.any { it in changedLines } }
+        val fileDeclarations = declarationsByKey[key].orEmpty().filter { d -> d.ownLines.any { it in changedLines } }
         val exempt = exemptedLines[key].orEmpty()
         val inlineLines = mutableSetOf<Int>()
         for (d in fileDeclarations.filter { it.inline }) {
             notMeasurable.add("$path (inline ${d.name})")
-            d.lines.forEach { inlineLines.add(it) }
+            inlineLines.addAll(d.ownLines)
         }
         for (d in fileDeclarations) {
             val isCovered = Triple(d.className, d.name, d.desc) in covered
@@ -169,21 +169,32 @@ private fun exempted(target: MarkerTarget, declarations: List<Declaration>): Pai
         is MarkerTarget.Line -> setOf(target.line) to emptyList()
         is MarkerTarget.Block -> target.lines.toSet() to emptyList()
         is MarkerTarget.Function -> {
-            val generated = "${target.owner}$${target.name}$"
             val methods = declarations.filter {
-                val owner = ownerName(it)
-                (owner == target.owner && baseName(it.name) == target.name &&
-                    it.lines.first >= target.line && it.lines.first < target.until) ||
-                    (owner.startsWith(generated) && it.lines.first >= target.line && it.lines.first < target.until)
+                ownerName(it) == target.owner && baseName(it.name) == target.name &&
+                    it.lines.first >= target.line && it.lines.first < target.until
             }
-            methods.flatMap { it.lines }.toSet() to methods
+            // Classes generated inside the function (anonymous objects): named after it, and within its own lines.
+            val prefix = "${target.owner}$${target.name}$"
+            val first = methods.flatMap { it.ownLines }.minOrNull()
+            val last = methods.flatMap { it.ownLines }.maxOrNull()
+            val generated = if (first == null || last == null) {
+                emptyList()
+            } else {
+                declarations.filter { d ->
+                    ownerName(d).startsWith(prefix) && d.ownLines.all { it in first..last }
+                }
+            }
+            val all = methods + generated
+            all.flatMap { it.ownLines }.toSet() to all
         }
         is MarkerTarget.Constructor -> {
+            // The primary constructor runs the class header line; a secondary constructor's own lines also hold the
+            // property initializers it runs, which are not the marked constructor's.
             val constructors = declarations.filter {
-                ownerName(it) == target.owner && it.name == CONSTRUCTOR &&
-                    it.lines.first <= target.lines.last && it.lines.last >= target.lines.first
+                ownerName(it) == target.owner && it.name == CONSTRUCTOR && target.header !in it.ownLines &&
+                    it.ownLines.any { line -> line in target.lines }
             }
-            constructors.flatMap { it.lines }.toSet() to constructors
+            constructors.flatMap { it.ownLines }.filter { it in target.lines }.toSet() to constructors
         }
         is MarkerTarget.Property -> {
             val names = accessorNames(target.name)
@@ -191,19 +202,22 @@ private fun exempted(target: MarkerTarget, declarations: List<Declaration>): Pai
                 ownerName(it) == target.owner && baseName(it.name) in names &&
                     it.lines.first >= target.line && it.lines.first < target.until
             }
-            (setOf(target.line) + accessors.flatMap { it.lines }) to accessors
+            (setOf(target.line) + accessors.flatMap { it.ownLines }) to accessors
         }
         is MarkerTarget.Class -> {
-            val simpleName = target.path.substringAfterLast('$')
             val members = declarations.filter {
                 val name = ownerName(it)
                 if (target.local) {
-                    simpleName in name.split('$')
+                    // A local class compiles to `Owner$function$Name` (or `Owner$1Name`) and lies in its function.
+                    val prefix = target.owner + "$"
+                    val segments = name.removePrefix(prefix).split('$').map { s -> s.trimStart { c -> c.isDigit() } }
+                    name.startsWith(prefix) && target.path in segments &&
+                        it.ownLines.all { line -> line in target.span }
                 } else {
                     name == target.path || name.startsWith(target.path + "$")
                 }
             }
-            (setOf(target.line) + members.flatMap { it.lines }) to members
+            (setOf(target.line) + members.flatMap { it.ownLines }) to members
         }
     }
 
