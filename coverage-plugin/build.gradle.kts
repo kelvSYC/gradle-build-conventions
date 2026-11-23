@@ -18,3 +18,11 @@ dependencies {
 testing.suites.named<JvmTestSuite>("test") {
     useJUnitJupiter("5.14.1")
 }
+
+val fixtures = sourceSets.register("fixtures")
+
+tasks.named<Test>("test") {
+    val compileFixtures = tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileFixturesKotlin")
+    dependsOn(compileFixtures)
+    systemProperty("fixtures.classes", compileFixtures.get().destinationDirectory.get().asFile.path)
+}
