@@ -102,11 +102,13 @@ abstract class VerifyChangedCoverage : DefaultTask() {
         val exemptions = mutableListOf<Exemption>()
         val invalid = mutableListOf<InvalidMarker>()
         val sourceKeys = mutableMapOf<String, String>()
+        val sources = mutableMapOf<String, String>()
         for (path in changed.byFile.keys) {
             val file = File(repoRoot, path)
             if (!file.isFile) continue
             val text = file.readText()
             sourceKeys[path] = reportKey(path, text)
+            sources[path] = text
             val (valid, reasonless) = scanExemptions(path, text)
             exemptions.addAll(valid)
             invalid.addAll(reasonless)
@@ -118,6 +120,7 @@ abstract class VerifyChangedCoverage : DefaultTask() {
             RuleSettings(branchFloor.get(), minimumBranches.get()),
             sourceKeys,
             hasExecutionData,
+            sources,
         )
         val text = result.render(projectName.get())
         val output = reportFile.get().asFile

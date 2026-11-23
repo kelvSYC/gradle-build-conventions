@@ -84,16 +84,16 @@ private const val RECEIVER = """(?:[\w<>?,.]+\.)?"""
 private val FUNCTION_NAME = Regex("""^\s*(?:<[^>]*>\s*)?$RECEIVER`?([A-Za-z_]\w*)`?\s*\(""")
 private val PROPERTY_NAME = Regex("""^\s*(?:<[^>]*>\s*)?$RECEIVER`?([A-Za-z_]\w*)`?""")
 private val CLASS_NAME = Regex("""^\s*`?([A-Za-z_]\w*)`?""")
-private val CLASS_KEYWORDS = setOf("class", "interface", "object", "fun interface")
-private val FUNCTION_KEYWORDS = setOf("fun")
-private val PROPERTY_KEYWORDS = setOf("val", "var")
+internal val CLASS_KEYWORDS = setOf("class", "interface", "object", "fun interface")
+internal val FUNCTION_KEYWORDS = setOf("fun")
+internal val PROPERTY_KEYWORDS = setOf("val", "var")
 private const val COMPANION_NAME = "Companion"
 private const val CONSTRUCTOR_NAME = "<init>"
 
 /** A declaration's [keyword] (`fun interface` normalised to one space) and [name] (null if none is found). */
-private data class DeclarationStart(val keyword: String, val name: String?)
+internal data class DeclarationStart(val keyword: String, val name: String?)
 
-private fun declarationStart(code: String): DeclarationStart? {
+internal fun declarationStart(code: String): DeclarationStart? {
     val match = DECLARATION.find(code) ?: return null
     val keyword = match.groupValues[1].replace(Regex("""\s+"""), " ")
     val rest = match.groupValues[2]
@@ -134,7 +134,7 @@ fun scanExemptions(file: String, text: String): Pair<List<Exemption>, List<Inval
  * Leading annotations removed from [code]: the rest of the line, and the depth of parentheses an annotation left open
  * (an annotation whose arguments continue on later lines).
  */
-private fun stripAnnotations(code: String): Pair<String, Int> {
+internal fun stripAnnotations(code: String): Pair<String, Int> {
     var i = code.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) code.length else it }
     while (i < code.length && code[i] == '@') {
         i++
@@ -153,7 +153,7 @@ private fun stripAnnotations(code: String): Pair<String, Int> {
  * Scans [code] from [start] with [depth] parentheses already open, skipping string literals, until the depth returns
  * to zero: the index after the closing parenthesis and zero, or the line's length and the depth still open.
  */
-private fun skipParentheses(code: String, start: Int, depth: Int): Pair<Int, Int> {
+internal fun skipParentheses(code: String, start: Int, depth: Int): Pair<Int, Int> {
     var open = depth
     var quote: Char? = null
     var i = start
@@ -173,13 +173,18 @@ private fun skipParentheses(code: String, start: Int, depth: Int): Pair<Int, Int
     return code.length to open
 }
 
-/** A scanned file: its [lines] and the [facade] class its top-level functions and properties compile into. */
-private class Source(val lines: List<String>, val facade: String)
+/**
+ * A scanned file: its [lines], their [masked] code (see [maskLines]) and the [facade] class its top-level functions and
+ * properties compile into.
+ */
+private class Source(val lines: List<String>, val facade: String) {
+    val masked = maskLines(lines)
+}
 
 private val JVM_NAME = Regex("""^\s*@file:JvmName\(\s*"([^"]+)"\s*\)""", RegexOption.MULTILINE)
 
 /** The file facade class of [file]: its `@file:JvmName`, else the file name, capitalised, with `Kt`. */
-private fun facadeName(file: String, text: String): String {
+internal fun facadeName(file: String, text: String): String {
     JVM_NAME.find(text)?.let { return it.groupValues[1] }
     val base = file.substringAfterLast('/').substringBeforeLast('.').replace(Regex("""[^A-Za-z0-9_]"""), "_")
     return base.replaceFirstChar { it.uppercaseChar() } + "Kt"
@@ -231,15 +236,15 @@ private fun targetOf(source: Source, index: Int, code: String): MarkerTarget {
     if (scope.local && start.keyword !in CLASS_KEYWORDS) return MarkerTarget.Line(number)
     val owner = scope.path.joinToString("$").ifEmpty { source.facade }
     return when {
-        start.keyword == "init" -> MarkerTarget.Block(number..blockEnd(lines, index))
+        start.keyword == "init" -> MarkerTarget.Block(number..blockEnd(source.masked.code, index))
         name == null -> MarkerTarget.Line(number)
         start.keyword in CLASS_KEYWORDS && scope.functionLine != null -> {
             val function = scope.functionLine
-            MarkerTarget.Class(number, name, true, owner, function + 1..blockEnd(lines, function))
+            MarkerTarget.Class(number, name, true, owner, function + 1..blockEnd(source.masked.code, function))
         }
         start.keyword in CLASS_KEYWORDS -> MarkerTarget.Class(number, (scope.path + name).joinToString("$"))
         start.keyword == "constructor" && scope.classLine != null -> {
-            val end = if ('{' in code) blockEnd(lines, index) else number
+            val end = if ('{' in code) blockEnd(source.masked.code, index) else number
             MarkerTarget.Constructor(number..end, owner, scope.classLine + 1)
         }
         start.keyword == "fun" ->
@@ -259,20 +264,20 @@ private fun nextDeclaration(lines: List<String>, index: Int, keywords: Set<Strin
     return Int.MAX_VALUE
 }
 
-private fun indentOf(line: String): Int =
+internal fun indentOf(line: String): Int =
     line.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) line.length else it }
 
 /**
  * The classes enclosing a declaration, outermost first; [local] when a function encloses it. [functionLine] is the
  * innermost enclosing function's line and [classLine] the innermost enclosing class's line (0-based), when present.
  */
-private class Scope(val path: List<String>, val local: Boolean, val functionLine: Int?, val classLine: Int?)
+internal class Scope(val path: List<String>, val local: Boolean, val functionLine: Int?, val classLine: Int?)
 
 /**
  * The classes enclosing line [index] (0-based): each enclosing declaration is the nearest preceding declaration
  * indented less than the one inside it.
  */
-private fun enclosingClasses(lines: List<String>, index: Int): Scope {
+internal fun enclosingClasses(lines: List<String>, index: Int): Scope {
     val path = mutableListOf<String>()
     var local = false
     var functionLine: Int? = null
@@ -301,31 +306,20 @@ private fun enclosingClasses(lines: List<String>, index: Int): Scope {
     return Scope(path, local, functionLine, classLine)
 }
 
-/**
- * The 1-based last line of the brace block opened on or after [start] (0-based); braces in string and character
- * literals and line comments are skipped.
- */
-private fun blockEnd(lines: List<String>, start: Int): Int {
+/** The 1-based last line of the brace block opened on or after [start] (0-based) of the masked [code]. */
+internal fun blockEnd(code: List<String>, start: Int): Int {
     var depth = 0
     var opened = false
-    for (index in start until lines.size) {
-        var quote: Char? = null
-        var i = 0
-        val line = lines[index]
-        while (i < line.length) {
-            val c = line[i]
-            when {
-                quote != null -> if (c == '\\') i++ else if (c == quote) quote = null
-                c == '"' || c == '\'' -> quote = c
-                c == '/' && line.getOrNull(i + 1) == '/' -> break
-                c == '{' -> { depth++; opened = true }
-                c == '}' -> depth--
+    for (index in start until code.size) {
+        for (c in code[index]) {
+            when (c) {
+                '{' -> { depth++; opened = true }
+                '}' -> depth--
             }
-            i++
         }
         if (opened && depth <= 0) return index + 1
     }
-    return lines.size
+    return code.size
 }
 
 private val PACKAGE = Regex("""^\s*package\s+([A-Za-z0-9_.`]+)""", RegexOption.MULTILINE)

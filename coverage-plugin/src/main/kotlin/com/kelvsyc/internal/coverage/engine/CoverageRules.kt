@@ -77,7 +77,10 @@ private fun SourceRoots.locate(path: String, sourceKeys: Map<String, String>): L
  *
  * [sourceKeys] maps changed files' repository paths to their report keys ([reportKey]), so that a file whose directory
  * does not mirror its package still matches its classes. [hasExecutionData] is false when no test produced execution
- * data for the project.
+ * data for the project. [sources] maps changed files' repository paths to their text: a declaration of a Kotlin file
+ * there is changed when a changed line falls in its source extent (see [SourceDeclaration]), which takes in its
+ * signature, default arguments, annotations, comments and the lambdas and objects in its body; a declaration without a
+ * source extent is changed when a changed line falls in the span of its line number table.
  */
 fun evaluate(
     changed: ChangedLines,
@@ -89,6 +92,7 @@ fun evaluate(
     settings: RuleSettings,
     sourceKeys: Map<String, String> = emptyMap(),
     hasExecutionData: Boolean = true,
+    sources: Map<String, String> = emptyMap(),
 ): CoverageResult {
     val measuredChanged = linkedMapOf<String, Pair<String, Set<Int>>>()
     val notMeasurable = mutableListOf<String>()
@@ -101,6 +105,12 @@ fun evaluate(
     }
 
     val declarationsByKey = declarations.groupBy { it.sourceFile }
+    val sourceDeclarations = mutableMapOf<String, List<SourceDeclaration>>()
+    for ((path, text) in sources) {
+        if (!path.endsWith(KOTLIN_EXTENSION)) continue
+        val key = (roots.locate(path, sourceKeys) as? Location.Measured)?.key ?: continue
+        sourceDeclarations[key] = scanSourceDeclarations(path, text)
+    }
     val covered = report.methods.filter { it.covered }.map { Triple(it.className, it.name, it.desc) }.toSet()
 
     val exemptedLines = mutableMapOf<String, MutableSet<Int>>()
@@ -108,11 +118,13 @@ fun evaluate(
     val affectingExemptions = mutableListOf<Exemption>()
     for (exemption in exemptions) {
         val key = (roots.locate(exemption.file, sourceKeys) as? Location.Measured)?.key ?: continue
-        val (lines, targets) = exempted(exemption.target, declarationsByKey[key].orEmpty())
+        val inSource = sourceDeclarations[key]
+        val (lines, targets) = exempted(exemption.target, declarationsByKey[key].orEmpty(), inSource.orEmpty())
         exemptedLines.getOrPut(key) { mutableSetOf() }.addAll(lines)
         exemptedDeclarations.addAll(targets)
         val changedLines = measuredChanged[key]?.second.orEmpty()
-        val touched = lines.any { it in changedLines } || targets.any { t -> t.ownLines.any { it in changedLines } }
+        val touched = lines.any { it in changedLines } ||
+            targets.any { t -> changeLines(t, inSource).any { it in changedLines } }
         if (touched) affectingExemptions.add(exemption)
     }
 
@@ -129,7 +141,10 @@ fun evaluate(
         repoPaths[key] = path
         changedMeasuredLines += changedLines.size
         if (key !in report.lines && declarationsByKey[key].orEmpty().isNotEmpty()) withoutData.add(path)
-        val fileDeclarations = declarationsByKey[key].orEmpty().filter { d -> d.ownLines.any { it in changedLines } }
+        val inSource = sourceDeclarations[key]
+        val fileDeclarations = declarationsByKey[key].orEmpty().filter { d ->
+            changeLines(d, inSource).any { it in changedLines }
+        }
         val exempt = exemptedLines[key].orEmpty()
         val inlineLines = mutableSetOf<Int>()
         for (d in fileDeclarations.filter { it.inline }) {
@@ -163,8 +178,48 @@ fun evaluate(
     )
 }
 
-/** The lines and declarations [target] exempts among a file's [declarations]. */
-private fun exempted(target: MarkerTarget, declarations: List<Declaration>): Pair<Set<Int>, List<Declaration>> =
+private const val KOTLIN_EXTENSION = ".kt"
+private const val STATIC_INITIALIZER = "<clinit>"
+private const val DEFAULT_IMPLS = "\$DefaultImpls"
+
+/**
+ * The lines whose change changes [declaration], given its file's [source] declarations (null when its text is
+ * unknown): its own lines, plus its source extent. A constructor's own lines interleave the class's members, so a
+ * constructor adds only the class header (for the primary constructor) or its own extent (for a secondary one), and a
+ * static initializer adds nothing. Any other declaration without a source extent adds the span of its own lines.
+ */
+private fun changeLines(declaration: Declaration, source: List<SourceDeclaration>?): Collection<Int> {
+    val own = declaration.ownLines
+    // An interface's default method bodies compile into its `DefaultImpls` class.
+    val owner = ownerName(declaration).removeSuffix(DEFAULT_IMPLS)
+    return when {
+        declaration.name == STATIC_INITIALIZER -> own
+        declaration.name == CONSTRUCTOR -> {
+            val extents = source.orEmpty().filter { s ->
+                s.owner == owner &&
+                    (s.kind == SourceKind.CLASS && own.any { it in s.header } ||
+                        s.kind == SourceKind.CONSTRUCTOR && own.any { it in s.extent })
+            }.flatMap { if (it.kind == SourceKind.CLASS) it.header else it.extent }
+            own + extents
+        }
+        else -> {
+            val base = baseName(declaration.name)
+            val extent = source.orEmpty().filter { s ->
+                s.owner == owner && own.any { it in s.extent } &&
+                    (s.kind == SourceKind.FUNCTION && s.name == base ||
+                        s.kind == SourceKind.PROPERTY && base in accessorNames(s.name))
+            }.minByOrNull { it.extent.last - it.extent.first }?.extent
+            own + (extent ?: declaration.lines)
+        }
+    }
+}
+
+/** The lines and declarations [target] exempts among a file's [declarations], given its [source] declarations. */
+private fun exempted(
+    target: MarkerTarget,
+    declarations: List<Declaration>,
+    source: List<SourceDeclaration>,
+): Pair<Set<Int>, List<Declaration>> =
     when (target) {
         is MarkerTarget.Line -> setOf(target.line) to emptyList()
         is MarkerTarget.Block -> target.lines.toSet() to emptyList()
@@ -173,17 +228,15 @@ private fun exempted(target: MarkerTarget, declarations: List<Declaration>): Pai
                 ownerName(it) == target.owner && baseName(it.name) == target.name &&
                     it.lines.first >= target.line && it.lines.first < target.until
             }
-            // Classes generated inside the function (anonymous objects): named after it, and within its own lines.
+            // Classes generated inside the function (anonymous objects, local classes): named after it, and within its
+            // source extent, else within its own lines.
             val prefix = "${target.owner}$${target.name}$"
-            val first = methods.flatMap { it.ownLines }.minOrNull()
-            val last = methods.flatMap { it.ownLines }.maxOrNull()
-            val generated = if (first == null || last == null) {
-                emptyList()
-            } else {
-                declarations.filter { d ->
-                    ownerName(d).startsWith(prefix) && d.ownLines.all { it in first..last }
-                }
-            }
+            val span = source.firstOrNull {
+                it.kind == SourceKind.FUNCTION && it.owner == target.owner && it.name == target.name &&
+                    it.line == target.line
+            }?.let { it.line..it.extent.last }
+                ?: methods.flatMap { it.ownLines }.let { own -> if (own.isEmpty()) IntRange.EMPTY else own.min()..own.max() }
+            val generated = declarations.filter { d -> ownerName(d).startsWith(prefix) && d.ownLines.all { it in span } }
             val all = methods + generated
             all.flatMap { it.ownLines }.toSet() to all
         }

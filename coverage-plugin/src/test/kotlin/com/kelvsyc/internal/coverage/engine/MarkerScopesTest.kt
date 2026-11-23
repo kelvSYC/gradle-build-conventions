@@ -32,6 +32,7 @@ class MarkerScopesTest {
         return evaluate(
             ChangedLines(mapOf(path to changed)), report, declarations, exemptions, invalid,
             SourceRoots(listOf("src/fixtures/kotlin"), emptyList()), RuleSettings(), mapOf(path to key),
+            sources = mapOf(path to text),
         )
     }
 
