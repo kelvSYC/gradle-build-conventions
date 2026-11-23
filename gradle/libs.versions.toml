@@ -8,6 +8,7 @@ freemarker = "2.3.35"
 # repository's wrapper version (checked by `checkToolchainVersions`).
 gradle = "9.9.2"
 jackson = "2.23.0"
+jacoco = "0.8.16"
 jsoup = "1.24.1"
 kotlin = "2.4.21"
 ksp = "2.3.14"

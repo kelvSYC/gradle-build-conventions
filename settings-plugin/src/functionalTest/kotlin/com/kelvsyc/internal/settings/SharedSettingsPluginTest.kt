@@ -234,6 +234,16 @@ class SharedSettingsPluginTest {
     }
 
     @Test
+    fun coveragePluginIsAvailableFromLibs() {
+        consumer(buildScript = """println("coverage-plugin=" + libs.conventions.coverage.plugin.get())""")
+        val result = build("help")
+        assertTrue(
+            result.output.contains("coverage-plugin=com.kelvsyc.internal:coverage-plugin:$conventionsVersion\n"),
+            result.output,
+        )
+    }
+
+    @Test
     fun groupDefaultsToKelvsyc() {
         consumer(buildScript = """println("group=" + group)""")
         val result = build("help")

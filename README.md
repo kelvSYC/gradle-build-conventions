@@ -1,6 +1,6 @@
 # gradle-build-conventions
 
-Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin and Dokka convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
+Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin, Dokka and coverage convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
 
 ## Consumer usage
 
@@ -66,6 +66,7 @@ kelvsyc {
 | `com.kelvsyc.internal.kotlin-gradle-library` | `build.gradle.kts` | Kotlin JVM library compiled against the Gradle API of its Gradle tier (see Gradle-plugin conventions below), with `verifyGradleLinkage`, sources jar, Kotest and mockk-ready tests; a `maven` publication with `maven-publish` |
 | `com.kelvsyc.internal.kotlin-gradle-plugin` | `build.gradle.kts` | The same for Gradle plugins, with `kotlin-dsl` and `java-gradle-plugin` (which publishes the plugin and its markers) |
 | `com.kelvsyc.internal.dokka` | `build.gradle.kts` | Dokka HTML documentation built by `assemble`, linking the JDK, the Kotlin standard library and the sources on GitHub; a javadoc jar of the Dokka Javadoc output for `java` projects that are not Kotlin Multiplatform |
+| `com.kelvsyc.internal.coverage` | `build.gradle.kts` | JaCoCo on every test task (and TestKit builds), `coverageReport`, and `verifyChangedCoverage`, which fails when changed code is not tested (see Coverage below) |
 
 ### Kotlin compatibility floors
 
@@ -87,7 +88,7 @@ Compiler options set directly in a build script (`kotlin { compilerOptions { ...
 
 The Kotlin Gradle plugin these conventions apply is the compiler, fixed to the catalog's `kotlin`. Builds applying them fail if the applied Kotlin Gradle plugin differs from it, or if another `org.jetbrains.kotlin` artifact on the build script classpath differs from the plugin.
 
-Builds with their own convention plugins that build on the shared Kotlin conventions depend on `libs.conventions.kotlin.plugin` (and `libs.conventions.dokka.plugin` for the Dokka convention, `libs.conventions.kotlin.gradle.plugin.conventions` for the Gradle-plugin conventions), all at the settings plugin's version. Each alias is `conventions-` followed by the artifact name.
+Builds with their own convention plugins that build on the shared Kotlin conventions depend on `libs.conventions.kotlin.plugin` (and `libs.conventions.dokka.plugin` for the Dokka convention, `libs.conventions.kotlin.gradle.plugin.conventions` for the Gradle-plugin conventions, `libs.conventions.coverage.plugin` for the coverage convention), all at the settings plugin's version. Each alias is `conventions-` followed by the artifact name.
 
 ### Gradle-plugin conventions
 
@@ -125,6 +126,62 @@ dokka {
 A Kotlin Multiplatform project with the `kotlin-multiplatform-jvm` convention gets a javadoc jar on its `jvm` publication, chosen once the project is evaluated. If every target is a JVM target (besides the common metadata), `org.jetbrains.dokka-javadoc` is applied and the jar holds Dokka's Javadoc output. With any other target (JS, native, Wasm, Android), the jar holds the HTML documentation instead, because Dokka's Javadoc format rejects source sets that are neither JVM nor common. Adding a non-JVM target to a JVM-only project therefore switches its javadoc jar from Javadoc to HTML.
 
 Dokka bundles Jackson, jsoup and FreeMarker at versions with known vulnerabilities. Dokka's own configurations (those named `dokka*`) resolve them at the shared catalog's patched versions, fixed when the plugin is built, and the plugin brings Jackson's BOM to the build script classpath; the project's own classpaths are left alone.
+
+### Coverage
+
+`com.kelvsyc.internal.coverage` is applied next to a Kotlin convention, in every project with JVM tests:
+
+```kotlin
+plugins {
+    id("com.kelvsyc.internal.kotlin-jvm-library") // or kotlin-multiplatform-jvm, kotlin-gradle-plugin, ...
+    id("com.kelvsyc.internal.coverage")
+}
+```
+
+It applies JaCoCo, at the shared catalog's `jacoco` version, to every test task (`test`, and `jvmTest` in Kotlin Multiplatform projects), and adds two tasks. Neither is part of `check`.
+
+- `coverageReport` writes the JaCoCo XML and HTML reports to `build/reports/jacoco/coverageReport/`, from every `.exec` file in `build/jacoco/`, over the JVM main classes and their sources: `main` for Kotlin JVM and Gradle-plugin projects, and for Kotlin Multiplatform the JVM target's main compilation, which includes `commonMain` and `jvmMain`. It runs every test task first.
+- `verifyChangedCoverage` checks the code changed since a diff base, and fails unless:
+  1. every new or changed public declaration (public or protected; not `internal` and not compiler-generated) is executed by at least one test. A declaration counts as changed when any of its lines, signature or body, is;
+  2. at least 75% of the branches on changed lines are covered, once the project's changed lines hold at least 4 branches;
+  3. every exemption marker on a changed line gives a reason.
+
+  Line coverage of changed lines is reported but never fails the check. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`.
+
+The changes are the working tree, including uncommitted and untracked files, against the merge base of `HEAD` and `origin/main`, restricted to the project's main sources. Pass another base with the Gradle property `coverage.base` (`-Pcoverage.base=<ref>`); if git cannot find the merge base (for example in a shallow clone without `origin/main`), the check fails rather than passing on an empty diff.
+
+To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests.
+
+Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. The marker exempts the line it is on, or, alone on the line before a declaration, that whole declaration:
+
+```kotlin
+// coverage-exempt: unreachable, the caller validates the input
+fun fallback(): Nothing = error("unreachable")
+
+val home = System.getenv("HOME") ?: error("no HOME") // coverage-exempt: always set on supported platforms
+```
+
+A marker without a reason fails the check.
+
+Some changed code cannot be measured, and is listed under "Not measurable" instead of failing the check: bodies of `inline` functions and properties, which JaCoCo attributes to their callers, and Kotlin Multiplatform sources compiled only for JS or native targets.
+
+The thresholds are set per project:
+
+```kotlin
+kelvsycCoverage {
+    branchFloor = 0.5 // default 0.75
+    minimumBranches = 8 // default 4
+}
+```
+
+In projects with `java-gradle-plugin` (such as `com.kelvsyc.internal.kotlin-gradle-plugin`), TestKit builds that use `withPluginClasspath()` run the plugin under test with JaCoCo too (through `io.github.gmazzo.gradle.testkit.jacoco`), and their coverage counts. A TestKit build records its data only if it applies the `jacoco-testkit-coverage` plugin, which `withPluginClasspath()` provides, in its settings or root build script:
+
+```kotlin
+// settings.gradle.kts of the TestKit build
+plugins {
+    id("jacoco-testkit-coverage")
+}
+```
 
 ## Keeping the pin up to date
 
