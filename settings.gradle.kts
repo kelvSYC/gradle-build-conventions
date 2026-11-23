@@ -28,4 +28,5 @@ include(
     "kotlin-plugin",
     "kotlin-gradle-plugin-conventions",
     "dokka-plugin",
+    "jacoco-plugin",
 )

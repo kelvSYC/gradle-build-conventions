@@ -1,6 +1,6 @@
 # gradle-build-conventions
 
-Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin and Dokka convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
+Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin, Dokka and JaCoCo convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
 
 ## Consumer usage
 
@@ -66,6 +66,7 @@ kelvsyc {
 | `com.kelvsyc.internal.kotlin-gradle-library` | `build.gradle.kts` | Kotlin JVM library compiled against the Gradle API of its Gradle tier (see Gradle-plugin conventions below), with `verifyGradleLinkage`, sources jar, Kotest and mockk-ready tests; a `maven` publication with `maven-publish` |
 | `com.kelvsyc.internal.kotlin-gradle-plugin` | `build.gradle.kts` | The same for Gradle plugins, with `kotlin-dsl` and `java-gradle-plugin` (which publishes the plugin and its markers) |
 | `com.kelvsyc.internal.dokka` | `build.gradle.kts` | Dokka HTML documentation built by `assemble`, linking the JDK, the Kotlin standard library and the sources on GitHub; a javadoc jar of the Dokka Javadoc output for `java` projects that are not Kotlin Multiplatform |
+| `com.kelvsyc.internal.jacoco` | `build.gradle.kts` | Gradle's `jacoco` plugin at the shared catalog's JaCoCo version, with XML and HTML reports on `jacocoTestReport` |
 
 ### Kotlin compatibility floors
 
@@ -125,6 +126,10 @@ dokka {
 A Kotlin Multiplatform project with the `kotlin-multiplatform-jvm` convention gets a javadoc jar on its `jvm` publication, chosen once the project is evaluated. If every target is a JVM target (besides the common metadata), `org.jetbrains.dokka-javadoc` is applied and the jar holds Dokka's Javadoc output. With any other target (JS, native, Wasm, Android), the jar holds the HTML documentation instead, because Dokka's Javadoc format rejects source sets that are neither JVM nor common. Adding a non-JVM target to a JVM-only project therefore switches its javadoc jar from Javadoc to HTML.
 
 Dokka bundles Jackson, jsoup and FreeMarker at versions with known vulnerabilities. Dokka's own configurations (those named `dokka*`) resolve them at the shared catalog's patched versions, fixed when the plugin is built, and the plugin brings Jackson's BOM to the build script classpath; the project's own classpaths are left alone.
+
+### JaCoCo
+
+`com.kelvsyc.internal.jacoco` applies Gradle's `jacoco` plugin and sets its `toolVersion` to the shared catalog's `jacoco` version, fixed when the plugin is built. In a project with the `java` plugin, `jacocoTestReport` requires the XML and HTML reports and depends on `test`. Nothing else: no thresholds or verification, and `check` does not run the report.
 
 ## Keeping the pin up to date
 
