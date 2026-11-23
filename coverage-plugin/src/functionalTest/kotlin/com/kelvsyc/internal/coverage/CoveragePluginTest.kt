@@ -219,14 +219,16 @@ class CoveragePluginTest {
         val report = JacocoXmlReport.parse(fixture.xml)
         assertTrue(report.lines.getValue("com/example/Greeting.kt").values.any { it.coveredInstructions > 0 })
 
-        // commonMain is a measured source root: an untested public function there fails the check.
+        // commonMain is a measured source root: an untested line there fails the check.
         fixture.write(
             "src/commonMain/kotlin/com/example/Farewell.kt",
             "package com.example\n\nfun farewell(): String = \"bye\"\n",
         )
         val output = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
-        assertTrue(output.contains("Uncovered public API"), output)
-        assertTrue(output.contains("src/commonMain/kotlin/com/example/Farewell.kt"), output)
+        assertTrue(
+            output.contains("Uncovered changed lines:\n  src/commonMain/kotlin/com/example/Farewell.kt:3"),
+            output,
+        )
     }
 
     @Test
@@ -234,8 +236,9 @@ class CoveragePluginTest {
         val fixture = plugin.reset()
         buildTwice(fixture.project, "coverageReport")
         val report = JacocoXmlReport.parse(fixture.xml)
-        val apply = report.methods.single { it.className == "com/example/GreetPlugin" && it.name == "apply" }
-        assertTrue(apply.covered, report.methods.toString())
+        // The first line of GreetPlugin.apply runs only in the TestKit build.
+        val register = report.lines.getValue("com/example/GreetPlugin.kt").getValue(8)
+        assertTrue(register.coveredInstructions > 0, register.toString())
     }
 
     @Test
@@ -264,11 +267,13 @@ class CoveragePluginTest {
         fixture.commit()
         val result = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg)
         assertTrue(result.output.contains("coverage: lib: FAILED"), result.output)
-        assertTrue(result.output.contains("Uncovered public API"), result.output)
         // Paths are relative to the repository, not the project.
-        assertTrue(result.output.contains("lib/src/main/kotlin/com/example/Extra.kt:3 extra"), result.output)
+        assertTrue(
+            result.output.contains("Uncovered changed lines:\n  lib/src/main/kotlin/com/example/Extra.kt:3"),
+            result.output,
+        )
         val written = File(fixture.project, "build/reports/coverage/verifyChangedCoverage.txt").readText()
-        assertTrue(written.contains("Uncovered public API"), written)
+        assertTrue(written.contains("Uncovered changed lines"), written)
     }
 
     @Test
@@ -318,7 +323,7 @@ class CoveragePluginTest {
             "package com.example\n\nfun greet(): String = \"hello\"\n\nfun untested(): Int = 3\n",
         )
         val output = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
-        assertTrue(output.contains("lib/src/main/kotlin/com/example/Greeter.kt:5 untested"), output)
+        assertTrue(output.contains("lib/src/main/kotlin/com/example/Greeter.kt:5\n"), output)
     }
 
     @Test
@@ -374,7 +379,7 @@ class CoveragePluginTest {
         val output = failTwice(
             fixture.project, "verifyChangedCoverage", fixture.baseArg, "-Pcoverage.useExistingData=true",
         ).output
-        assertTrue(output.contains("lib/src/main/kotlin/com/example/Extra.kt:3 extra"), output)
+        assertTrue(output.contains("lib/src/main/kotlin/com/example/Extra.kt:3\n"), output)
     }
 
     @Test
@@ -417,29 +422,7 @@ class CoveragePluginTest {
         // Kotlin allows a file's directory to omit its package's prefix.
         fixture.write("src/main/kotlin/Foo.kt", "package com.example.deep\n\nfun foo(): Int = 1\n")
         val output = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
-        assertTrue(output.contains("lib/src/main/kotlin/Foo.kt:3 foo"), output)
-    }
-
-    @Test
-    fun exemptedClassPasses() {
-        val fixture = jvm.reset()
-        fixture.write(
-            "src/main/kotlin/com/example/Glue.kt",
-            """
-            |package com.example
-            |
-            |// coverage-exempt: platform glue
-            |class Glue(val name: String) {
-            |    fun describe(): String = "glue " + name
-            |
-            |    class Nested {
-            |        fun nested(): Int = 1
-            |    }
-            |}
-            """.trimMargin(),
-        )
-        val output = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
-        assertTrue(output.contains("coverage: lib: PASSED"), output)
+        assertTrue(output.contains("lib/src/main/kotlin/Foo.kt:3\n"), output)
     }
 
     @Test

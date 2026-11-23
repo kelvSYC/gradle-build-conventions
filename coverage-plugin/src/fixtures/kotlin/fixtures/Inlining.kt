@@ -5,17 +5,20 @@ inline fun twice(block: () -> Unit) {
     block()
 }
 
+inline fun sum(values: List<Int>): Int {
+    var total = 0
+    values.forEach { total += it }
+    return total
+}
+
 fun callsInline(): Int {
     var total = 0
-    listOf(1, 2).forEach { total += it }
     twice { total += 1 }
-    return total.let { it + 1 }
+    return total + sum(listOf(1))
 }
 
-enum class Color { RED, GREEN }
+val answer: Int
+    get() = System.getProperty("answer").length
 
-interface Greeter {
-    fun greet(): String
-}
-
-class Delegating(private val greeter: Greeter) : Greeter by greeter
+inline val doubled: Int
+    get() = answer * 2

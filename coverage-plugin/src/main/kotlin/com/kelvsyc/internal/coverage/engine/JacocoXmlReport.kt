@@ -13,16 +13,10 @@ data class LineCoverage(
     val coveredBranches: Int,
 )
 
-/** Whether a method ([className] is a JVM internal name) was entered at all. */
-data class MethodCoverage(val className: String, val name: String, val desc: String, val covered: Boolean)
-
 /**
- * A JaCoCo XML report: per-line coverage keyed by `package/path/File.kt`, and per-method coverage.
+ * A JaCoCo XML report: per-line coverage keyed by `package/path/File.kt`.
  */
-class JacocoXmlReport(
-    val lines: Map<String, Map<Int, LineCoverage>>,
-    val methods: List<MethodCoverage>,
-) {
+class JacocoXmlReport(val lines: Map<String, Map<Int, LineCoverage>>) {
     companion object {
         private const val LOAD_EXTERNAL_DTD = "http://apache.org/xml/features/nonvalidating/load-external-dtd"
         private const val EXTERNAL_GENERAL_ENTITIES = "http://xml.org/sax/features/external-general-entities"
@@ -39,20 +33,8 @@ class JacocoXmlReport(
             val root = factory.newDocumentBuilder().parse(xml).documentElement
 
             val lines = linkedMapOf<String, Map<Int, LineCoverage>>()
-            val methods = mutableListOf<MethodCoverage>()
             for (pkg in root.children("package")) {
                 val pkgName = pkg.getAttribute("name")
-                for (cls in pkg.children("class")) {
-                    val className = cls.getAttribute("name")
-                    for (method in cls.children("method")) {
-                        val covered = method.children("counter")
-                            .firstOrNull { it.getAttribute("type") == "METHOD" }
-                            ?.getAttribute("covered")?.toInt() ?: 0
-                        methods.add(
-                            MethodCoverage(className, method.getAttribute("name"), method.getAttribute("desc"), covered > 0),
-                        )
-                    }
-                }
                 for (source in pkg.children("sourcefile")) {
                     val path = if (pkgName.isEmpty()) source.getAttribute("name") else "$pkgName/${source.getAttribute("name")}"
                     lines[path] = source.children("line").associate {
@@ -65,7 +47,7 @@ class JacocoXmlReport(
                     }
                 }
             }
-            return JacocoXmlReport(lines, methods)
+            return JacocoXmlReport(lines)
         }
 
         private fun Element.children(tag: String): List<Element> {

@@ -143,31 +143,27 @@ In a composite build, apply it to every included build that applies a shared Kot
 It applies JaCoCo, at the shared catalog's `jacoco` version, to every test task (`test`, and `jvmTest` in Kotlin Multiplatform projects), and adds two tasks. Neither is part of `check`.
 
 - `coverageReport` writes the JaCoCo XML and HTML reports to `build/reports/jacoco/coverageReport/`, from every `.exec` file in `build/jacoco/`, over the JVM main classes and their sources: `main` for Kotlin JVM and Gradle-plugin projects, and for Kotlin Multiplatform the JVM target's main compilation, which includes `commonMain` and `jvmMain`. It runs every test task first.
-- `verifyChangedCoverage` checks the code changed since a diff base, and fails unless:
-  1. every new or changed public declaration (public or protected; not `internal` and not compiler-generated) is executed by at least one test. A declaration counts as changed when any line of its source changes: its annotations, its signature (parameters, default arguments, return type), its body, including comments, continuation lines and the lambdas, anonymous objects and local classes inside it, or a property's initializer and accessors. A change to its KDoc alone does not count. A constructor counts as changed when a line it runs, the class header (for the primary constructor) or its own declaration (for a secondary one) changes, so changing a method between two property initializers does not change it. Declarations are matched to their compiled methods by name, including names given by `@JvmName`, `@get:JvmName` and `@set:JvmName`. Where a declaration's source cannot be read, such as in Java files, its lines are those its line number table spans;
+- `verifyChangedCoverage` checks the lines changed since a diff base, and fails unless:
+  1. every changed line that compiles to code (a line in the JaCoCo report) is executed by at least one test. Comments, blank lines and lines without bytecode, such as a bare signature or a closing brace, are not judged;
   2. at least 75% of the branches on changed lines are covered, once the project's changed lines hold at least 4 branches;
   3. every exemption marker on a changed line gives a reason.
 
-  Line coverage of changed lines is reported but never fails the check. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`. The check reads its own XML-only report (`verifyChangedCoverageReport`), so it never waits for the HTML report.
+  The uncovered lines are listed with file and line, and line coverage of changed lines is summarised. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`. The check reads its own XML-only report (`verifyChangedCoverageReport`), so it never waits for the HTML report.
 
-  A Kotlin Multiplatform project without a JVM target passes, listing its changed main sources as not measurable. A project that applies neither the Kotlin JVM nor the Kotlin Multiplatform plugin fails, rather than passing on an empty diff. Source files are matched to their classes by their `package` declaration, so a file whose directory omits part of its package is still checked.
+  A Kotlin Multiplatform project without a JVM target passes, listing its changed main sources as not measurable. A project that applies neither the Kotlin JVM nor the Kotlin Multiplatform plugin fails, rather than passing on an empty diff, and so does a changed file that compiles to classes but is missing from the coverage report. Source files are matched to their classes by their `package` declaration, so a file whose directory omits part of its package is still checked.
+
+  The check judges lines, not declarations, so a change to an existing function's signature alone, with no changed line of code, does not by itself demand a test.
 
 The changes are the working tree, including uncommitted and untracked files, against the merge base of `HEAD` and `origin/main`, restricted to the project's main sources. Pass another base with the Gradle property `coverage.base` (`-Pcoverage.base=<ref>`); if git cannot find the merge base, the check fails rather than passing on an empty diff. In a shallow clone (such as a default `actions/checkout`), check out with `fetch-depth: 0` or fetch the base first.
 
 To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests, though it still compiles the main classes. Without any execution data the check reports that no test executed the project's code, rather than reading an earlier report.
 
-Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. A marker alone on a line applies to the next line of code, skipping blank lines, comments and lines holding only annotations (including annotations whose arguments span several lines); a marker at the end of a line applies to that line. It exempts what that line declares, matched within the class or file facade that declares it (the enclosing class, found by indentation, or for top-level declarations the file's `@file:JvmName` or `<FileName>Kt` class), so it never reaches another class's code:
-
-- a `class`, `interface` or `object` (annotations and modifiers may precede it on the same line): all of its members, constructors and nested classes. A `companion object` or nested class is matched within the class that encloses it, so it never exempts another class's companion or a same-named nested class. A class declared inside a function is matched among the classes compiled from that function's lines. A companion marker does not exempt the static bridges `@JvmStatic` adds to the outer class; they stay checked;
-- a `fun`: that function's methods in its class, matched by name or `@JvmName` (ignoring the suffixes the compiler adds for `internal` functions, value-class parameters and default arguments), including its lambdas, local functions, and the anonymous and local classes declared within it. A function without a body, such as an `abstract fun`, has no code to exempt; the marker never moves on to the next function, nor to another overload of the same name;
-- a secondary `constructor`: that constructor and its own lines. The primary constructor, the other constructors and the property initializers that every constructor runs stay checked;
-- a property (`val` or `var`, including a constructor property): that line and the property's accessors and delegate code in its class, such as a getter on a later line or a `by lazy { }` block;
-- an `init` block: the block's lines;
-- anything else, including a `val`, `var` or `fun` declared inside a function body: that line only, never the enclosing function.
+Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. A marker at the end of a line exempts that line; a marker alone on a line exempts the next line of code, skipping blank lines, comments and lines holding only annotations (including annotations whose arguments span several lines). A marker exempts one line only: to exempt a whole declaration, mark each of its lines with code.
 
 ```kotlin
-// coverage-exempt: unreachable, the caller validates the input
-fun fallback(): Nothing = error("unreachable")
+fun fallback(): Nothing =
+    // coverage-exempt: unreachable, the caller validates the input
+    error("unreachable")
 
 fun home(): String {
     // coverage-exempt: always set on supported platforms
@@ -180,7 +176,7 @@ val user = System.getenv("USER") ?: "unknown" // coverage-exempt: always set on 
 
 A marker without a reason fails the check.
 
-Some changed code cannot be measured, and is listed under "Not measurable" instead of failing the check: bodies of `inline` functions and properties, which JaCoCo attributes to their callers, and Kotlin Multiplatform sources compiled only for JS or native targets.
+Some changed lines cannot be measured, and are listed under "Not measurable" instead of failing the check: lines of `inline` function and property accessor bodies, which JaCoCo attributes to their callers (found from the compiled classes' Kotlin metadata), and Kotlin Multiplatform sources compiled only for JS or native targets.
 
 The thresholds are set per project:
 

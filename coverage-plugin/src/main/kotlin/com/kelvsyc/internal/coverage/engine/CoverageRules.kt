@@ -2,6 +2,7 @@ package com.kelvsyc.internal.coverage.engine
 
 private const val DEFAULT_BRANCH_FLOOR = 0.75
 private const val DEFAULT_MINIMUM_BRANCHES = 4
+private const val PERCENT = 100
 
 /**
  * Thresholds for the changed-code rules: the branch floor applies once the changed lines hold at least
@@ -18,16 +19,16 @@ data class RuleSettings(
 data class SourceRoots(val measured: List<String>, val notMeasured: List<String>)
 
 /**
- * The outcome of [evaluate].
+ * The outcome of [evaluate]. Files are repository-relative paths.
  *
- * [notMeasurable] holds `file:line` (or `file:first-last`) entries and `file (inline name)` entries.
- * [filesWithoutCoverageData] lists changed files that declare code but have no entry in the report, which means the
- * report is stale or missing; [noExecutionData] means no test executed the project's code at all.
- * [changedMeasuredLines] counts changed lines under measured roots, and [repoPaths] maps report keys to
- * repository-relative paths for display.
+ * [uncoveredLines] are the changed lines (`file:line`) that no test executed. [notMeasurable] holds `file:lines`
+ * entries, marked `(inline)` for the lines of inline bodies. [filesWithoutCoverageData] lists changed files that
+ * compile to classes but have no entry in the report, which means the report is stale or missing; [noExecutionData]
+ * means the report is empty, because no test executed the project's code. [changedMeasuredLines] counts changed lines
+ * under measured roots.
  */
 data class CoverageResult(
-    val uncoveredPublicApi: List<Declaration>,
+    val uncoveredLines: List<String>,
     val branchesCovered: Int,
     val branchesTotal: Int,
     val branchFloorMet: Boolean,
@@ -36,298 +37,115 @@ data class CoverageResult(
     val notMeasurable: List<String>,
     val exemptions: List<Exemption>,
     val invalidMarkers: List<InvalidMarker>,
-    val filesWithoutCoverageData: List<String> = emptyList(),
-    val changedMeasuredLines: Int = 0,
-    val repoPaths: Map<String, String> = emptyMap(),
-    val noExecutionData: Boolean = false,
+    val filesWithoutCoverageData: List<String>,
+    val noExecutionData: Boolean,
+    val changedMeasuredLines: Int,
 ) {
     /**
-     * True when no changed public API is uncovered, the branch floor is met, no marker is invalid and every changed
-     * file that declares code has coverage data.
+     * True when every changed line is covered, the branch floor is met, no marker is invalid and every changed file
+     * that compiles to classes has coverage data.
      */
     val passed: Boolean
-        get() = uncoveredPublicApi.isEmpty() && branchFloorMet && invalidMarkers.isEmpty() &&
+        get() = uncoveredLines.isEmpty() && branchFloorMet && invalidMarkers.isEmpty() &&
             filesWithoutCoverageData.isEmpty()
 }
 
-private sealed interface Location {
-    data class Measured(val key: String) : Location
-    data object NotMeasured : Location
-}
-
-/**
- * Locates [path] under the roots. A measured file is keyed by [sourceKeys] (see [reportKey]), falling back to its path
- * below the root for files whose text is unknown.
- */
-private fun SourceRoots.locate(path: String, sourceKeys: Map<String, String>): Location? {
+/** The longest root holding [path], and whether it is measured; null when no root holds it. */
+private fun SourceRoots.locate(path: String): Pair<String, Boolean>? {
     val measuredRoot = measured.filter { path.startsWith("$it/") }.maxByOrNull { it.length }
     val otherRoot = notMeasured.filter { path.startsWith("$it/") }.maxByOrNull { it.length }
     return when {
-        measuredRoot != null && (otherRoot == null || measuredRoot.length >= otherRoot.length) ->
-            Location.Measured(sourceKeys[path] ?: path.removePrefix("$measuredRoot/"))
-        otherRoot != null -> Location.NotMeasured
+        measuredRoot != null && (otherRoot == null || measuredRoot.length >= otherRoot.length) -> measuredRoot to true
+        otherRoot != null -> otherRoot to false
         else -> null
     }
 }
 
 /**
- * Applies the changed-code rules: every changed public declaration is covered, branches on changed lines meet the
- * floor, and no exemption marker lacks a reason. Inline declarations and non-JVM sources are reported as not
- * measurable rather than judged.
+ * Applies the changed-code rules: every changed line with code (a line in the report) is executed by a test, branches
+ * on changed lines meet the floor, and no marker on a changed line lacks a reason. Exempted lines are not judged; lines
+ * of inline bodies and of sources under non-JVM roots are reported as not measurable.
  *
- * [sourceKeys] maps changed files' repository paths to their report keys ([reportKey]), so that a file whose directory
- * does not mirror its package still matches its classes. [hasExecutionData] is false when no test produced execution
- * data for the project. [sources] maps changed files' repository paths to their text: a declaration of a Kotlin file
- * there is changed when a changed line falls in its source extent (see [SourceDeclaration]), which takes in its
- * signature, default arguments, annotations, comments and the lambdas and objects in its body; a declaration without a
- * source extent is changed when a changed line falls in the span of its line number table.
+ * [exemptionsByFile] and [packagesByFile] hold the markers ([scanExemptions]) and declared package ([packageName]) of
+ * changed files, by repository path. A file is matched to the report by its package and file name, so a file whose
+ * directory does not mirror its package still matches its classes; without a known package, by its path below its root.
  */
 fun evaluate(
     changed: ChangedLines,
     report: JacocoXmlReport,
-    declarations: List<Declaration>,
-    exemptions: List<Exemption>,
-    invalid: List<InvalidMarker>,
+    compiled: CompiledFacts,
+    exemptionsByFile: Map<String, ExemptionScan>,
+    packagesByFile: Map<String, String>,
     roots: SourceRoots,
     settings: RuleSettings,
-    sourceKeys: Map<String, String> = emptyMap(),
-    hasExecutionData: Boolean = true,
-    sources: Map<String, String> = emptyMap(),
 ): CoverageResult {
-    val measuredChanged = linkedMapOf<String, Pair<String, Set<Int>>>()
+    val uncovered = mutableListOf<String>()
     val notMeasurable = mutableListOf<String>()
-    for ((path, lines) in changed.byFile.toSortedMap()) {
-        when (val location = roots.locate(path, sourceKeys)) {
-            is Location.Measured -> measuredChanged[location.key] = path to lines
-            Location.NotMeasured -> notMeasurable.addAll(lineRanges(lines).map { "$path:$it" })
-            null -> Unit
-        }
-    }
-
-    val declarationsByKey = declarations.groupBy { it.sourceFile }
-    val sourceDeclarations = mutableMapOf<String, List<SourceDeclaration>>()
-    for ((path, text) in sources) {
-        if (!path.endsWith(KOTLIN_EXTENSION)) continue
-        val key = (roots.locate(path, sourceKeys) as? Location.Measured)?.key ?: continue
-        sourceDeclarations[key] = scanSourceDeclarations(path, text)
-    }
-    val covered = report.methods.filter { it.covered }.map { Triple(it.className, it.name, it.desc) }.toSet()
-
-    val exemptedLines = mutableMapOf<String, MutableSet<Int>>()
-    val exemptedDeclarations = mutableSetOf<Declaration>()
-    val affectingExemptions = mutableListOf<Exemption>()
-    for (exemption in exemptions) {
-        val key = (roots.locate(exemption.file, sourceKeys) as? Location.Measured)?.key ?: continue
-        val inSource = sourceDeclarations[key]
-        val (lines, targets) = exempted(exemption.target, declarationsByKey[key].orEmpty(), inSource.orEmpty())
-        exemptedLines.getOrPut(key) { mutableSetOf() }.addAll(lines)
-        exemptedDeclarations.addAll(targets)
-        val changedLines = measuredChanged[key]?.second.orEmpty()
-        val touched = lines.any { it in changedLines } ||
-            targets.any { t -> changeLines(t, inSource).any { it in changedLines } }
-        if (touched) affectingExemptions.add(exemption)
-    }
-
-    val uncovered = mutableListOf<Declaration>()
+    val exemptions = mutableListOf<Exemption>()
+    val invalid = mutableListOf<InvalidMarker>()
     val withoutData = mutableListOf<String>()
-    val repoPaths = mutableMapOf<String, String>()
     var changedMeasuredLines = 0
     var branchesCovered = 0
     var branchesTotal = 0
     var linesCovered = 0
     var linesTotal = 0
-    for ((key, entry) in measuredChanged) {
-        val (path, changedLines) = entry
-        repoPaths[key] = path
-        changedMeasuredLines += changedLines.size
-        if (key !in report.lines && declarationsByKey[key].orEmpty().isNotEmpty()) withoutData.add(path)
-        val inSource = sourceDeclarations[key]
-        val fileDeclarations = declarationsByKey[key].orEmpty().filter { d ->
-            changeLines(d, inSource).any { it in changedLines }
+    for ((path, lines) in changed.byFile.toSortedMap()) {
+        val (root, measured) = roots.locate(path) ?: continue
+        val scan = exemptionsByFile[path]
+        scan?.invalid?.filterTo(invalid) { it.line in lines }
+        if (!measured) {
+            lineRanges(lines).mapTo(notMeasurable) { "$path:$it" }
+            continue
         }
-        val exempt = exemptedLines[key].orEmpty()
-        val inlineLines = mutableSetOf<Int>()
-        for (d in fileDeclarations.filter { it.inline }) {
-            notMeasurable.add("$path (inline ${d.name})")
-            inlineLines.addAll(d.ownLines)
+        changedMeasuredLines += lines.size
+        scan?.exemptions?.filterTo(exemptions) { it.target in lines }
+        val fileName = path.substringAfterLast('/')
+        val key = when (val pkg = packagesByFile[path]) {
+            null -> path.removePrefix("$root/")
+            "" -> fileName
+            else -> pkg.replace('.', '/') + "/" + fileName
         }
-        for (d in fileDeclarations) {
-            val isCovered = Triple(d.className, d.name, d.desc) in covered
-            if (d.publicApi && !d.inline && !isCovered && d !in exemptedDeclarations) uncovered.add(d)
+        val reportLines = report.lines[key]
+        if (reportLines == null) {
+            if (key in compiled.compiledSourceFiles) withoutData.add(path)
+            continue
         }
-        val reportLines = report.lines[key].orEmpty()
-        for (line in changedLines.sorted()) {
+        val inline = compiled.inlineLines[key].orEmpty()
+        lineRanges(lines.filter { it in inline }).mapTo(notMeasurable) { "$path:$it (inline)" }
+        val exempt = scan?.exemptLines.orEmpty()
+        for (line in lines.sorted()) {
             val coverage = reportLines[line] ?: continue
-            if (line in exempt || line in inlineLines) continue
+            if (line in exempt || line in inline) continue
             linesTotal++
-            if (coverage.coveredInstructions > 0) linesCovered++
+            if (coverage.coveredInstructions > 0) linesCovered++ else uncovered.add("$path:$line")
             branchesCovered += coverage.coveredBranches
             branchesTotal += coverage.coveredBranches + coverage.missedBranches
         }
     }
-
     val floorMet = branchesTotal < settings.minimumBranches ||
         branchesCovered.toDouble() / branchesTotal >= settings.branchFloor
-    val invalidOnChangedLines = invalid.filter {
-        roots.locate(it.file, sourceKeys) != null && it.line in changed.byFile[it.file].orEmpty()
-    }
     return CoverageResult(
-        uncovered, branchesCovered, branchesTotal, floorMet, linesCovered, linesTotal,
-        notMeasurable, affectingExemptions.sortedWith(compareBy({ it.file }, { it.line })), invalidOnChangedLines,
-        withoutData, changedMeasuredLines, repoPaths, noExecutionData = !hasExecutionData,
+        uncovered, branchesCovered, branchesTotal, floorMet, linesCovered, linesTotal, notMeasurable, exemptions,
+        invalid, withoutData, report.lines.isEmpty(), changedMeasuredLines,
     )
 }
 
-private const val KOTLIN_EXTENSION = ".kt"
-private const val STATIC_INITIALIZER = "<clinit>"
-private const val DEFAULT_IMPLS = "\$DefaultImpls"
-
-/**
- * The lines whose change changes [declaration], given its file's [source] declarations (null when its text is
- * unknown): its own lines, plus its source extent. A constructor's own lines interleave the class's members, so a
- * constructor adds only the class header (for the primary constructor) or its own extent (for a secondary one), and a
- * static initializer adds nothing. Any other declaration without a source extent adds the span of its own lines.
- */
-private fun changeLines(declaration: Declaration, source: List<SourceDeclaration>?): Collection<Int> {
-    val own = declaration.ownLines
-    // An interface's default method bodies compile into its `DefaultImpls` class.
-    val owner = ownerName(declaration).removeSuffix(DEFAULT_IMPLS)
-    return when {
-        declaration.name == STATIC_INITIALIZER -> own
-        declaration.name == CONSTRUCTOR -> {
-            val extents = source.orEmpty().filter { s ->
-                s.owner == owner &&
-                    (s.kind == SourceKind.CLASS && own.any { it in s.header } ||
-                        s.kind == SourceKind.CONSTRUCTOR && own.any { it in s.extent })
-            }.flatMap { if (it.kind == SourceKind.CLASS) it.header else it.extent }
-            own + extents
-        }
-        else -> {
-            val base = baseName(declaration.name)
-            val enclosing = source.orEmpty().filter { s -> s.owner == owner && own.any { it in s.extent } }
-            val named = enclosing.filter { it.compilesTo(base) }
-            // A declaration whose name could not be read: the innermost function or property around the method.
-            val unnamed = enclosing.filter { it.name == null && (it.kind == SourceKind.FUNCTION || isAccessor(base)) }
-            val extent = named.ifEmpty { unnamed }.minByOrNull { it.extent.last - it.extent.first }?.extent
-            own + (extent ?: declaration.lines)
-        }
-    }
-}
-
-/** True when a method named [base] (see [baseName]) is compiled from this function or one of this property's accessors. */
-private fun SourceDeclaration.compilesTo(base: String): Boolean = when (kind) {
-    SourceKind.FUNCTION -> base == name || base in jvmNames
-    SourceKind.PROPERTY -> name != null && base in accessorNames(name) || base in jvmNames
-    else -> false
-}
-
-private val ACCESSOR = Regex("""(?:get|set|is)[A-Z_].*""")
-
-/** True when [base] has the form of a property accessor's name. */
-private fun isAccessor(base: String): Boolean = ACCESSOR.matches(base)
-
-/** The lines and declarations [target] exempts among a file's [declarations], given its [source] declarations. */
-private fun exempted(
-    target: MarkerTarget,
-    declarations: List<Declaration>,
-    source: List<SourceDeclaration>,
-): Pair<Set<Int>, List<Declaration>> =
-    when (target) {
-        is MarkerTarget.Line -> setOf(target.line) to emptyList()
-        is MarkerTarget.Block -> target.lines.toSet() to emptyList()
-        is MarkerTarget.Function -> {
-            val declared = source.firstOrNull {
-                it.kind == SourceKind.FUNCTION && it.owner == target.owner && it.line == target.line
-            }
-            val names = setOf(target.name) + declared?.jvmNames.orEmpty()
-            val methods = declarations.filter {
-                ownerName(it) == target.owner && baseName(it.name) in names &&
-                    it.lines.first >= target.line && it.lines.first < target.until
-            }
-            // Classes generated inside the function (anonymous objects, local classes): named after it, and within its
-            // source extent, else within its own lines.
-            val prefix = "${target.owner}$${target.name}$"
-            val span = declared?.let { it.line..it.extent.last }
-                ?: methods.flatMap { it.ownLines }.let { own -> if (own.isEmpty()) IntRange.EMPTY else own.min()..own.max() }
-            val generated = declarations.filter { d -> ownerName(d).startsWith(prefix) && d.ownLines.all { it in span } }
-            val all = methods + generated
-            all.flatMap { it.ownLines }.toSet() to all
-        }
-        is MarkerTarget.Constructor -> {
-            // The primary constructor runs the class header line; a secondary constructor's own lines also hold the
-            // property initializers it runs, which are not the marked constructor's.
-            val constructors = declarations.filter {
-                ownerName(it) == target.owner && it.name == CONSTRUCTOR && target.header !in it.ownLines &&
-                    it.ownLines.any { line -> line in target.lines }
-            }
-            constructors.flatMap { it.ownLines }.filter { it in target.lines }.toSet() to constructors
-        }
-        is MarkerTarget.Property -> {
-            val declared = source.firstOrNull {
-                it.kind == SourceKind.PROPERTY && it.owner == target.owner && it.line == target.line
-            }
-            val names = accessorNames(target.name) + declared?.jvmNames.orEmpty()
-            val accessors = declarations.filter {
-                ownerName(it) == target.owner && baseName(it.name) in names &&
-                    it.lines.first >= target.line && it.lines.first < target.until
-            }
-            (setOf(target.line) + accessors.flatMap { it.ownLines }) to accessors
-        }
-        is MarkerTarget.Class -> {
-            val members = declarations.filter {
-                val name = ownerName(it)
-                if (target.local) {
-                    // A local class compiles to `Owner$function$Name` (or `Owner$1Name`) and lies in its function.
-                    val prefix = target.owner + "$"
-                    val segments = name.removePrefix(prefix).split('$').map { s -> s.trimStart { c -> c.isDigit() } }
-                    name.startsWith(prefix) && target.path in segments &&
-                        it.ownLines.all { line -> line in target.span }
-                } else {
-                    name == target.path || name.startsWith(target.path + "$")
-                }
-            }
-            (setOf(target.line) + members.flatMap { it.ownLines }) to members
-        }
-    }
-
-private const val CONSTRUCTOR = "<init>"
-
-/** A declaration's class name after the package, such as `Outer$Inner` or `FooKt`. */
-private fun ownerName(declaration: Declaration): String = declaration.className.substringAfterLast('/')
-
-/** A method name without the suffixes the Kotlin compiler mangles into it (`$module`, `-hash`, `$default`). */
-private fun baseName(name: String): String = name.substringBefore('$').substringBefore('-')
-
-/** The base names of property [name]'s accessors and of the code its delegate runs. */
-private fun accessorNames(name: String): Set<String> {
-    val isProperty = name.length > 2 && name.startsWith("is") && name[2].isUpperCase()
-    val capitalised = name.replaceFirstChar { it.uppercaseChar() }
-    val getter = if (isProperty) name else "get$capitalised"
-    val setter = if (isProperty) "set" + name.removePrefix("is") else "set$capitalised"
-    return setOf(getter, setter, "${name}_delegate")
-}
-
-private fun lineRanges(lines: Set<Int>): List<String> {
+/** [lines] as sorted ranges of consecutive lines: `3-5`, `9`. */
+private fun lineRanges(lines: Collection<Int>): List<String> {
     val result = mutableListOf<String>()
-    var start: Int? = null
-    var previous = 0
     for (line in lines.sorted()) {
-        if (start != null && line != previous + 1) {
-            result.add(rangeText(start, previous))
-            start = null
+        val last = result.lastOrNull()
+        val end = last?.substringAfter('-')?.toInt()
+        if (end != null && line == end + 1) {
+            result[result.lastIndex] = last.substringBefore('-') + "-" + line
+        } else {
+            result.add("$line")
         }
-        if (start == null) start = line
-        previous = line
     }
-    start?.let { result.add(rangeText(it, previous)) }
     return result
 }
 
-private fun rangeText(first: Int, last: Int) = if (first == last) "$first" else "$first-$last"
-
-private fun percent(covered: Int, total: Int) = if (total == 0) "n/a" else "${covered * PERCENT / total}%"
-
-private const val PERCENT = 100
+private fun percent(covered: Int, total: Int) = "${covered * PERCENT / total}%"
 
 /**
  * Renders the result as text whose first line is `coverage: <projectName>: PASSED` or `FAILED`.
@@ -336,24 +154,14 @@ fun CoverageResult.render(projectName: String): String = buildString {
     appendLine("coverage: $projectName: ${if (passed) "PASSED" else "FAILED"}")
     if (changedMeasuredLines == 0) {
         appendLine("no changed JVM code")
-    } else if (linesTotal == 0 && uncoveredPublicApi.isEmpty() && filesWithoutCoverageData.isEmpty() &&
-        notMeasurable.isEmpty() && exemptions.isEmpty()
+    } else if (linesTotal == 0 && filesWithoutCoverageData.isEmpty() && notMeasurable.isEmpty() &&
+        exemptions.isEmpty()
     ) {
         appendLine("no changed executable lines")
     }
-    if (uncoveredPublicApi.isNotEmpty()) {
-        appendLine("Uncovered public API:")
-        uncoveredPublicApi.forEach {
-            appendLine("  ${repoPaths[it.sourceFile] ?: it.sourceFile}:${it.lines.first} ${it.name}${it.desc}")
-        }
-    }
-    if (filesWithoutCoverageData.isNotEmpty()) {
-        if (noExecutionData) {
-            appendLine("No coverage data: no test executed this project's code (no JaCoCo execution data):")
-        } else {
-            appendLine("No coverage data (run the tests and generate the coverage report):")
-        }
-        filesWithoutCoverageData.forEach { appendLine("  $it") }
+    if (uncoveredLines.isNotEmpty()) {
+        appendLine("Uncovered changed lines:")
+        uncoveredLines.forEach { appendLine("  $it") }
     }
     if (branchesTotal > 0) {
         val verdict = if (branchFloorMet) "" else " (below floor)"
@@ -373,5 +181,13 @@ fun CoverageResult.render(projectName: String): String = buildString {
     if (invalidMarkers.isNotEmpty()) {
         appendLine("Invalid markers:")
         invalidMarkers.forEach { appendLine("  ${it.file}:${it.line} coverage-exempt marker needs a reason") }
+    }
+    if (filesWithoutCoverageData.isNotEmpty()) {
+        if (noExecutionData) {
+            appendLine("No coverage data: no test executed this project's code (no JaCoCo execution data):")
+        } else {
+            appendLine("No coverage data (run the tests and generate the coverage report):")
+        }
+        filesWithoutCoverageData.forEach { appendLine("  $it") }
     }
 }.trimEnd()

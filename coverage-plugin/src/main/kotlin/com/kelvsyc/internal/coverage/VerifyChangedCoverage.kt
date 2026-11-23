@@ -1,15 +1,14 @@
 package com.kelvsyc.internal.coverage
 
 import com.kelvsyc.internal.coverage.engine.ChangedLines
-import com.kelvsyc.internal.coverage.engine.Exemption
-import com.kelvsyc.internal.coverage.engine.InvalidMarker
+import com.kelvsyc.internal.coverage.engine.ExemptionScan
 import com.kelvsyc.internal.coverage.engine.JacocoXmlReport
 import com.kelvsyc.internal.coverage.engine.RuleSettings
 import com.kelvsyc.internal.coverage.engine.SourceRoots
 import com.kelvsyc.internal.coverage.engine.evaluate
+import com.kelvsyc.internal.coverage.engine.packageName
 import com.kelvsyc.internal.coverage.engine.render
-import com.kelvsyc.internal.coverage.engine.reportKey
-import com.kelvsyc.internal.coverage.engine.scanDeclarations
+import com.kelvsyc.internal.coverage.engine.scanCompiled
 import com.kelvsyc.internal.coverage.engine.scanExemptions
 import java.io.File
 import org.gradle.api.DefaultTask
@@ -28,8 +27,8 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.work.DisableCachingByDefault
 
 /**
- * Checks that changed code is tested: every changed public declaration is executed, branches on changed lines meet
- * [branchFloor] once there are [minimumBranches] of them, and every `// coverage-exempt:` marker on a changed line
+ * Checks that changed code is tested: every changed line with code is executed by a test, branches on changed lines
+ * meet [branchFloor] once there are [minimumBranches] of them, and every `// coverage-exempt:` marker on a changed line
  * gives a reason. It fails in a project without Kotlin, rather than passing on an empty diff.
  *
  * It writes the result to [reportFile], prints it, and fails when the check does not pass. Markers are read from the
@@ -92,35 +91,24 @@ abstract class VerifyChangedCoverage : DefaultTask() {
         val changed = ChangedLines.parseUnifiedDiff(changes.diff, changes.untracked)
         val xml = jacocoXml.get().asFile
         val hasExecutionData = !executionData.isEmpty
-        val report = if (hasExecutionData && xml.isFile) {
-            JacocoXmlReport.parse(xml)
-        } else {
-            JacocoXmlReport(emptyMap(), emptyList())
-        }
-        val declarations = scanDeclarations(classDirectories.files.filter { it.isDirectory })
+        // Without execution data the report is empty, which the result reports as no test having run.
+        val report = if (hasExecutionData && xml.isFile) JacocoXmlReport.parse(xml) else JacocoXmlReport(emptyMap())
+        val compiled = scanCompiled(classDirectories.files.filter { it.isDirectory })
 
-        val exemptions = mutableListOf<Exemption>()
-        val invalid = mutableListOf<InvalidMarker>()
-        val sourceKeys = mutableMapOf<String, String>()
-        val sources = mutableMapOf<String, String>()
+        val exemptions = mutableMapOf<String, ExemptionScan>()
+        val packages = mutableMapOf<String, String>()
         for (path in changed.byFile.keys) {
             val file = File(repoRoot, path)
             if (!file.isFile) continue
             val text = file.readText()
-            sourceKeys[path] = reportKey(path, text)
-            sources[path] = text
-            val (valid, reasonless) = scanExemptions(path, text)
-            exemptions.addAll(valid)
-            invalid.addAll(reasonless)
+            packages[path] = packageName(text)
+            exemptions[path] = scanExemptions(path, text)
         }
 
         val result = evaluate(
-            changed, report, declarations, exemptions, invalid,
+            changed, report, compiled, exemptions, packages,
             SourceRoots(changes.measured, changes.notMeasured),
             RuleSettings(branchFloor.get(), minimumBranches.get()),
-            sourceKeys,
-            hasExecutionData,
-            sources,
         )
         val text = result.render(projectName.get())
         val output = reportFile.get().asFile
