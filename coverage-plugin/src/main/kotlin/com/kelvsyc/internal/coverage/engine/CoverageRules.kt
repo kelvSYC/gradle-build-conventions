@@ -21,6 +21,9 @@ data class SourceRoots(val measured: List<String>, val notMeasured: List<String>
  * The outcome of [evaluate].
  *
  * [notMeasurable] holds `file:line` (or `file:first-last`) entries and `file (inline name)` entries.
+ * [filesWithoutCoverageData] lists changed files that declare code but have no entry in the report, which means the
+ * report is stale or missing. [changedMeasuredLines] counts changed lines under measured roots, and [repoPaths] maps
+ * report keys to repository-relative paths for display.
  */
 data class CoverageResult(
     val uncoveredPublicApi: List<Declaration>,
@@ -32,10 +35,17 @@ data class CoverageResult(
     val notMeasurable: List<String>,
     val exemptions: List<Exemption>,
     val invalidMarkers: List<InvalidMarker>,
+    val filesWithoutCoverageData: List<String> = emptyList(),
+    val changedMeasuredLines: Int = 0,
+    val repoPaths: Map<String, String> = emptyMap(),
 ) {
-    /** True when no changed public API is uncovered, the branch floor is met and no marker is invalid. */
+    /**
+     * True when no changed public API is uncovered, the branch floor is met, no marker is invalid and every changed
+     * file that declares code has coverage data.
+     */
     val passed: Boolean
-        get() = uncoveredPublicApi.isEmpty() && branchFloorMet && invalidMarkers.isEmpty()
+        get() = uncoveredPublicApi.isEmpty() && branchFloorMet && invalidMarkers.isEmpty() &&
+            filesWithoutCoverageData.isEmpty()
 }
 
 private sealed interface Location {
@@ -82,6 +92,7 @@ fun evaluate(
     val covered = report.methods.filter { it.covered }.map { Triple(it.className, it.name, it.desc) }.toSet()
 
     val exemptedLines = mutableMapOf<String, MutableSet<Int>>()
+    val exemptedDeclarations = mutableSetOf<Declaration>()
     val affectingExemptions = mutableListOf<Exemption>()
     for (exemption in exemptions) {
         val key = (roots.locate(exemption.file) as? Location.Measured)?.key ?: continue
@@ -90,21 +101,29 @@ fun evaluate(
             val inFile = declarationsByKey[key].orEmpty().filter { it.lines.first > exemption.line }
             val firstLine = inFile.minOfOrNull { it.lines.first } ?: continue
             val targets = inFile.filter { it.lines.first == firstLine }
+            exemptedDeclarations.addAll(targets)
             targets.forEach { exemptedLines.getOrPut(key) { mutableSetOf() }.addAll(it.lines) }
             if (targets.any { target -> target.lines.any { it in changedLines } }) affectingExemptions.add(exemption)
         } else {
             exemptedLines.getOrPut(key) { mutableSetOf() }.add(exemption.line)
+            exemptedDeclarations.addAll(declarationsByKey[key].orEmpty().filter { it.lines.first == exemption.line })
             if (exemption.line in changedLines) affectingExemptions.add(exemption)
         }
     }
 
     val uncovered = mutableListOf<Declaration>()
+    val withoutData = mutableListOf<String>()
+    val repoPaths = mutableMapOf<String, String>()
+    var changedMeasuredLines = 0
     var branchesCovered = 0
     var branchesTotal = 0
     var linesCovered = 0
     var linesTotal = 0
     for ((key, entry) in measuredChanged) {
         val (path, changedLines) = entry
+        repoPaths[key] = path
+        changedMeasuredLines += changedLines.size
+        if (key !in report.lines && declarationsByKey[key].orEmpty().isNotEmpty()) withoutData.add(path)
         val fileDeclarations = declarationsByKey[key].orEmpty().filter { d -> d.lines.any { it in changedLines } }
         val exempt = exemptedLines[key].orEmpty()
         val inlineLines = mutableSetOf<Int>()
@@ -114,7 +133,7 @@ fun evaluate(
         }
         for (d in fileDeclarations) {
             val isCovered = Triple(d.className, d.name, d.desc) in covered
-            if (d.publicApi && !d.inline && !isCovered && d.lines.none { it in exempt }) uncovered.add(d)
+            if (d.publicApi && !d.inline && !isCovered && d !in exemptedDeclarations) uncovered.add(d)
         }
         val reportLines = report.lines[key].orEmpty()
         for (line in changedLines.sorted()) {
@@ -129,10 +148,13 @@ fun evaluate(
 
     val floorMet = branchesTotal < settings.minimumBranches ||
         branchesCovered.toDouble() / branchesTotal >= settings.branchFloor
-    val invalidOnChangedLines = invalid.filter { it.line in changed.byFile[it.file].orEmpty() }
+    val invalidOnChangedLines = invalid.filter {
+        roots.locate(it.file) != null && it.line in changed.byFile[it.file].orEmpty()
+    }
     return CoverageResult(
         uncovered, branchesCovered, branchesTotal, floorMet, linesCovered, linesTotal,
         notMeasurable, affectingExemptions.sortedWith(compareBy({ it.file }, { it.line })), invalidOnChangedLines,
+        withoutData, changedMeasuredLines, repoPaths,
     )
 }
 
@@ -163,12 +185,22 @@ private const val PERCENT = 100
  */
 fun CoverageResult.render(projectName: String): String = buildString {
     appendLine("coverage: $projectName: ${if (passed) "PASSED" else "FAILED"}")
-    if (linesTotal == 0 && uncoveredPublicApi.isEmpty() && notMeasurable.isEmpty() && exemptions.isEmpty()) {
+    if (changedMeasuredLines == 0) {
         appendLine("no changed JVM code")
+    } else if (linesTotal == 0 && uncoveredPublicApi.isEmpty() && filesWithoutCoverageData.isEmpty() &&
+        notMeasurable.isEmpty() && exemptions.isEmpty()
+    ) {
+        appendLine("no changed executable lines")
     }
     if (uncoveredPublicApi.isNotEmpty()) {
         appendLine("Uncovered public API:")
-        uncoveredPublicApi.forEach { appendLine("  ${it.sourceFile}:${it.lines.first} ${it.name}${it.desc}") }
+        uncoveredPublicApi.forEach {
+            appendLine("  ${repoPaths[it.sourceFile] ?: it.sourceFile}:${it.lines.first} ${it.name}${it.desc}")
+        }
+    }
+    if (filesWithoutCoverageData.isNotEmpty()) {
+        appendLine("No coverage data (run the tests and generate the coverage report):")
+        filesWithoutCoverageData.forEach { appendLine("  $it") }
     }
     if (branchesTotal > 0) {
         val verdict = if (branchFloorMet) "" else " (below floor)"

@@ -208,6 +208,52 @@ class CoverageRulesTest {
     }
 
     @Test
+    fun trailingExemptionInBodyDoesNotExemptTheDeclaration() {
+        val exemption = Exemption(repoFile, 12, "unreachable", false)
+        val result = eval(changed(10, 12), report(false), listOf(decl()), exemptions = listOf(exemption))
+        assertFalse(result.passed)
+        assertEquals(1, result.uncoveredPublicApi.size)
+    }
+
+    @Test
+    fun trailingExemptionOnFirstLineExemptsTheDeclaration() {
+        val exemption = Exemption(repoFile, 10, "stub", false)
+        assertTrue(eval(changed(10), report(false), listOf(decl()), exemptions = listOf(exemption)).passed)
+    }
+
+    @Test
+    fun changedFileWithDeclarationsButNoReportEntryFails() {
+        val result = eval(changed(10), JacocoXmlReport(emptyMap(), emptyList()), listOf(decl(publicApi = false)))
+        assertFalse(result.passed)
+        assertEquals(listOf(repoFile), result.filesWithoutCoverageData)
+        assertTrue(result.render("p").contains("$repoFile"))
+    }
+
+    @Test
+    fun commentOnlyChangeHasNoExecutableLines() {
+        val result = eval(changed(1), report(true), listOf(decl()))
+        assertTrue(result.passed)
+        assertTrue(result.render("p").contains("no changed executable lines"))
+        assertFalse(result.render("p").contains("no changed JVM code"))
+    }
+
+    @Test
+    fun uncoveredApiIsRenderedWithRepoRelativePath() {
+        val text = eval(changed(12), report(false), listOf(decl(lines = 12..14))).render("p")
+        assertTrue(text.contains("$repoFile:12"))
+    }
+
+    @Test
+    fun invalidMarkerOutsideAnyRootIsIgnored() {
+        val result = eval(
+            ChangedLines(mapOf("build.gradle.kts" to setOf(3))),
+            report(),
+            invalid = listOf(InvalidMarker("build.gradle.kts", 3)),
+        )
+        assertTrue(result.passed)
+    }
+
+    @Test
     fun renderStartsWithPassed() {
         assertEquals("coverage: proj: PASSED", eval(changed(10), report(true), listOf(decl())).render("proj").lines().first())
     }
