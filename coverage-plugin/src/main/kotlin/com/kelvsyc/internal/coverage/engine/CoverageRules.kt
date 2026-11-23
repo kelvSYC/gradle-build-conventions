@@ -22,8 +22,9 @@ data class SourceRoots(val measured: List<String>, val notMeasured: List<String>
  *
  * [notMeasurable] holds `file:line` (or `file:first-last`) entries and `file (inline name)` entries.
  * [filesWithoutCoverageData] lists changed files that declare code but have no entry in the report, which means the
- * report is stale or missing. [changedMeasuredLines] counts changed lines under measured roots, and [repoPaths] maps
- * report keys to repository-relative paths for display.
+ * report is stale or missing; [noExecutionData] means no test executed the project's code at all.
+ * [changedMeasuredLines] counts changed lines under measured roots, and [repoPaths] maps report keys to
+ * repository-relative paths for display.
  */
 data class CoverageResult(
     val uncoveredPublicApi: List<Declaration>,
@@ -38,6 +39,7 @@ data class CoverageResult(
     val filesWithoutCoverageData: List<String> = emptyList(),
     val changedMeasuredLines: Int = 0,
     val repoPaths: Map<String, String> = emptyMap(),
+    val noExecutionData: Boolean = false,
 ) {
     /**
      * True when no changed public API is uncovered, the branch floor is met, no marker is invalid and every changed
@@ -53,12 +55,16 @@ private sealed interface Location {
     data object NotMeasured : Location
 }
 
-private fun SourceRoots.locate(path: String): Location? {
+/**
+ * Locates [path] under the roots. A measured file is keyed by [sourceKeys] (see [reportKey]), falling back to its path
+ * below the root for files whose text is unknown.
+ */
+private fun SourceRoots.locate(path: String, sourceKeys: Map<String, String>): Location? {
     val measuredRoot = measured.filter { path.startsWith("$it/") }.maxByOrNull { it.length }
     val otherRoot = notMeasured.filter { path.startsWith("$it/") }.maxByOrNull { it.length }
     return when {
         measuredRoot != null && (otherRoot == null || measuredRoot.length >= otherRoot.length) ->
-            Location.Measured(path.removePrefix("$measuredRoot/"))
+            Location.Measured(sourceKeys[path] ?: path.removePrefix("$measuredRoot/"))
         otherRoot != null -> Location.NotMeasured
         else -> null
     }
@@ -68,6 +74,10 @@ private fun SourceRoots.locate(path: String): Location? {
  * Applies the changed-code rules: every changed public declaration is covered, branches on changed lines meet the
  * floor, and no exemption marker lacks a reason. Inline declarations and non-JVM sources are reported as not
  * measurable rather than judged.
+ *
+ * [sourceKeys] maps changed files' repository paths to their report keys ([reportKey]), so that a file whose directory
+ * does not mirror its package still matches its classes. [hasExecutionData] is false when no test produced execution
+ * data for the project.
  */
 fun evaluate(
     changed: ChangedLines,
@@ -77,11 +87,13 @@ fun evaluate(
     invalid: List<InvalidMarker>,
     roots: SourceRoots,
     settings: RuleSettings,
+    sourceKeys: Map<String, String> = emptyMap(),
+    hasExecutionData: Boolean = true,
 ): CoverageResult {
     val measuredChanged = linkedMapOf<String, Pair<String, Set<Int>>>()
     val notMeasurable = mutableListOf<String>()
     for ((path, lines) in changed.byFile.toSortedMap()) {
-        when (val location = roots.locate(path)) {
+        when (val location = roots.locate(path, sourceKeys)) {
             is Location.Measured -> measuredChanged[location.key] = path to lines
             Location.NotMeasured -> notMeasurable.addAll(lineRanges(lines).map { "$path:$it" })
             null -> Unit
@@ -95,20 +107,13 @@ fun evaluate(
     val exemptedDeclarations = mutableSetOf<Declaration>()
     val affectingExemptions = mutableListOf<Exemption>()
     for (exemption in exemptions) {
-        val key = (roots.locate(exemption.file) as? Location.Measured)?.key ?: continue
+        val key = (roots.locate(exemption.file, sourceKeys) as? Location.Measured)?.key ?: continue
+        val (lines, targets) = exempted(exemption.target, declarationsByKey[key].orEmpty())
+        exemptedLines.getOrPut(key) { mutableSetOf() }.addAll(lines)
+        exemptedDeclarations.addAll(targets)
         val changedLines = measuredChanged[key]?.second.orEmpty()
-        if (exemption.standalone) {
-            val inFile = declarationsByKey[key].orEmpty().filter { it.lines.first > exemption.line }
-            val firstLine = inFile.minOfOrNull { it.lines.first } ?: continue
-            val targets = inFile.filter { it.lines.first == firstLine }
-            exemptedDeclarations.addAll(targets)
-            targets.forEach { exemptedLines.getOrPut(key) { mutableSetOf() }.addAll(it.lines) }
-            if (targets.any { target -> target.lines.any { it in changedLines } }) affectingExemptions.add(exemption)
-        } else {
-            exemptedLines.getOrPut(key) { mutableSetOf() }.add(exemption.line)
-            exemptedDeclarations.addAll(declarationsByKey[key].orEmpty().filter { it.lines.first == exemption.line })
-            if (exemption.line in changedLines) affectingExemptions.add(exemption)
-        }
+        val touched = lines.any { it in changedLines } || targets.any { t -> t.lines.any { it in changedLines } }
+        if (touched) affectingExemptions.add(exemption)
     }
 
     val uncovered = mutableListOf<Declaration>()
@@ -149,14 +154,37 @@ fun evaluate(
     val floorMet = branchesTotal < settings.minimumBranches ||
         branchesCovered.toDouble() / branchesTotal >= settings.branchFloor
     val invalidOnChangedLines = invalid.filter {
-        roots.locate(it.file) != null && it.line in changed.byFile[it.file].orEmpty()
+        roots.locate(it.file, sourceKeys) != null && it.line in changed.byFile[it.file].orEmpty()
     }
     return CoverageResult(
         uncovered, branchesCovered, branchesTotal, floorMet, linesCovered, linesTotal,
         notMeasurable, affectingExemptions.sortedWith(compareBy({ it.file }, { it.line })), invalidOnChangedLines,
-        withoutData, changedMeasuredLines, repoPaths,
+        withoutData, changedMeasuredLines, repoPaths, noExecutionData = !hasExecutionData,
     )
 }
+
+/** The lines and declarations [target] exempts among a file's [declarations]. */
+private fun exempted(target: MarkerTarget, declarations: List<Declaration>): Pair<Set<Int>, List<Declaration>> =
+    when (target) {
+        is MarkerTarget.Line -> setOf(target.line) to emptyList()
+        is MarkerTarget.Block -> target.lines.toSet() to emptyList()
+        is MarkerTarget.Property -> setOf(target.line) to declarations.filter { it.lines.first == target.line }
+        is MarkerTarget.Function -> {
+            val firstLine = declarations.filter { it.lines.first >= target.line }.minOfOrNull { it.lines.first }
+            val main = declarations.filter { it.lines.first == firstLine }
+            val last = main.maxOfOrNull { it.lines.last }
+            if (firstLine == null || last == null) {
+                setOf(target.line) to emptyList()
+            } else {
+                val inside = declarations.filter { it.lines.first >= firstLine && it.lines.last <= last }
+                (target.line..last).toSet() to (main + inside).distinct()
+            }
+        }
+        is MarkerTarget.Class -> {
+            val members = declarations.filter { target.name in it.className.substringAfterLast('/').split('$') }
+            (setOf(target.line) + members.flatMap { it.lines }) to members
+        }
+    }
 
 private fun lineRanges(lines: Set<Int>): List<String> {
     val result = mutableListOf<String>()
@@ -199,7 +227,11 @@ fun CoverageResult.render(projectName: String): String = buildString {
         }
     }
     if (filesWithoutCoverageData.isNotEmpty()) {
-        appendLine("No coverage data (run the tests and generate the coverage report):")
+        if (noExecutionData) {
+            appendLine("No coverage data: no test executed this project's code (no JaCoCo execution data):")
+        } else {
+            appendLine("No coverage data (run the tests and generate the coverage report):")
+        }
         filesWithoutCoverageData.forEach { appendLine("  $it") }
     }
     if (branchesTotal > 0) {

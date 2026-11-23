@@ -36,7 +36,7 @@ data class GitChanges(
  *
  * The repository is the one containing [Parameters.workingDirectory]. The diff base is [Parameters.baseRef], or
  * `origin/main` when absent; if git cannot find its merge base with `HEAD`, this fails, naming the `coverage.base`
- * Gradle property.
+ * Gradle property, and explaining the fix for a shallow clone when the repository is one.
  */
 abstract class GitChangesValueSource @Inject constructor(
     private val execOperations: ExecOperations,
@@ -64,14 +64,8 @@ abstract class GitChangesValueSource @Inject constructor(
         val notMeasured = relativize(repoRoot, parameters.notMeasuredRoots.get())
 
         val ref = parameters.baseRef.orNull ?: DEFAULT_BASE
-        val mergeBase = run(repoRoot, "merge-base", "HEAD", ref)
-        if (mergeBase.exitCode != 0) {
-            throw GradleException(
-                "Cannot find the merge base of HEAD and '$ref' for the coverage diff (${mergeBase.error.trim()}). " +
-                    "Fetch it, or set the Gradle property coverage.base to a ref that shares history with HEAD " +
-                    "(-Pcoverage.base=<ref>).",
-            )
-        }
+        val mergeBase = run(repoRoot, "merge-base", "--end-of-options", "HEAD", ref)
+        if (mergeBase.exitCode != 0) throw baseFailure(repoRoot, ref, mergeBase.error.trim())
 
         val roots = measured + notMeasured
         if (roots.isEmpty()) return GitChanges(repoRoot.path, measured, notMeasured, "", emptyMap())
@@ -85,6 +79,19 @@ abstract class GitChangesValueSource @Inject constructor(
             .split('\u0000').filter { it.isNotEmpty() }
             .associateWith { lineCount(File(repoRoot, it)) }
         return GitChanges(repoRoot.path, measured, notMeasured, diff, untracked)
+    }
+
+    private fun baseFailure(repoRoot: File, ref: String, error: String): GradleException {
+        val shallow = run(repoRoot, "rev-parse", "--is-shallow-repository").output.trim() == "true"
+        val detail = if (error.isEmpty()) "" else " ($error)"
+        val remedy = if (shallow) {
+            "This is a shallow clone: check out with fetch-depth: 0 (or fetch the base), " +
+                "or set -Pcoverage.base=<ref> to a ref that shares history with HEAD."
+        } else {
+            "Fetch it, or set the Gradle property coverage.base to a ref that shares history with HEAD " +
+                "(-Pcoverage.base=<ref>)."
+        }
+        return GradleException("Cannot find the merge base of HEAD and '$ref' for the coverage diff$detail. $remedy")
     }
 
     private fun relativize(repoRoot: File, roots: List<String>): List<String> =

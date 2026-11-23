@@ -35,7 +35,9 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinTarget
  * property `coverage.useExistingData` is `true`, in which case it reads the execution data already on disk. The check
  * diffs the working tree against the merge base of `HEAD` and the Gradle property `coverage.base` (default
  * `origin/main`), restricted to those sources and, for Kotlin Multiplatform, the other targets' main sources, which
- * are reported as not measurable. It fails in a project without JVM sources.
+ * are reported as not measurable (all of its main sources, for a Kotlin Multiplatform project without a JVM target).
+ * It fails in a project that applies neither Kotlin plugin. The check reads its own XML-only report,
+ * `verifyChangedCoverageReport`.
  */
 class CoveragePlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -72,38 +74,47 @@ class CoveragePlugin : Plugin<Project> {
         val useExistingData = project.providers.gradleProperty(USE_EXISTING_DATA_PROPERTY)
             .map { it.toBoolean() }.getOrElse(false)
         val testTasks = project.tasks.withType(Test::class.java)
-        // Set rather than read from the report: a report's output location does not survive the configuration cache
-        // as another task's input.
-        val xmlReport = project.layout.buildDirectory.file("reports/jacoco/coverageReport/coverageReport.xml")
         val execFiles = project.fileTree(project.layout.buildDirectory.dir("jacoco")) { include("*.exec") }
-        val report = project.tasks.register("coverageReport", JacocoReport::class.java) {
+        val reportDir = project.layout.buildDirectory.dir("reports/jacoco")
+        val registerReport = { name: String, html: Boolean ->
+            project.tasks.register(name, JacocoReport::class.java) {
+                executionData.from(execFiles)
+                classDirectories.from(classDirs)
+                sourceDirectories.from(measuredSources)
+                reports.xml.required.set(true)
+                reports.xml.outputLocation.set(reportDir.map { it.file("$name/$name.xml") })
+                reports.html.required.set(html)
+                reports.csv.required.set(false)
+                if (useExistingData) mustRunAfter(testTasks) else dependsOn(testTasks)
+            }
+        }
+        registerReport("coverageReport", true).configure {
             group = LifecycleBasePlugin.VERIFICATION_GROUP
             description = "Generates the JaCoCo report of the JVM main classes from every build/jacoco/*.exec."
-            executionData.from(execFiles)
-            classDirectories.from(classDirs)
-            sourceDirectories.from(measuredSources)
-            reports.xml.required.set(true)
-            reports.xml.outputLocation.set(xmlReport)
-            reports.html.required.set(true)
-            reports.csv.required.set(false)
-            if (useExistingData) mustRunAfter(testTasks) else dependsOn(testTasks)
+        }
+        // The check's own report: XML only, so that the check never waits for the HTML report.
+        val checkReport = registerReport(CHECK_REPORT, false)
+        checkReport.configure {
+            description = "Generates the JaCoCo XML report verifyChangedCoverage reads."
         }
 
         val noSourcesReason = project.provider {
-            if (project.pluginManager.hasPlugin("org.jetbrains.kotlin.multiplatform")) {
-                "the Kotlin Multiplatform project has no JVM target; do not apply com.kelvsyc.internal.coverage to it"
-            } else {
+            val kotlinPlugins = listOf("org.jetbrains.kotlin.jvm", "org.jetbrains.kotlin.multiplatform")
+            if (kotlinPlugins.none { project.pluginManager.hasPlugin(it) }) {
                 "the project applies neither the Kotlin JVM nor the Kotlin Multiplatform plugin"
+            } else {
+                null
             }
         }
         val projectName = if (project.path == ":") project.name else project.rootProject.name + project.path
         project.tasks.register("verifyChangedCoverage", VerifyChangedCoverage::class.java) {
             group = LifecycleBasePlugin.VERIFICATION_GROUP
             description = "Checks that the code changed since the coverage.base merge base is tested."
-            dependsOn(report)
-            jacocoXml.set(xmlReport)
+            dependsOn(checkReport)
+            // Set rather than read from the report: a report's output location does not survive the configuration
+            // cache as another task's input.
+            jacocoXml.set(reportDir.map { it.file("$CHECK_REPORT/$CHECK_REPORT.xml") })
             executionData.from(execFiles)
-            measuredSourceDirectories.from(measuredSources)
             this.noSourcesReason.set(noSourcesReason)
             classDirectories.from(classDirs)
             branchFloor.set(extension.branchFloor)
@@ -141,11 +152,9 @@ class CoveragePlugin : Plugin<Project> {
         notMeasuredSources.from(
             project.provider {
                 val measured = measuredSets()
-                kotlin.targets
-                    .filter { it.platformType !in MEASURED_OR_SHARED }
-                    .flatMap { it.mainSourceSets() }
-                    .filter { it !in measured }
-                    .flatMap { it.kotlin.srcDirs }
+                val otherMain = kotlin.targets.filter { it.platformType != KotlinPlatformType.jvm }
+                    .flatMap { it.mainSourceSets() } + kotlin.sourceSets.filter { it.name.endsWith(MAIN_SUFFIX) }
+                otherMain.filter { it !in measured }.distinct().flatMap { it.kotlin.srcDirs }
             },
         )
     }
@@ -157,8 +166,10 @@ class CoveragePlugin : Plugin<Project> {
         files.elements.map { elements -> elements.map { it.asFile.absolutePath } }
 
     private companion object {
-        /** Platforms whose main sources are measured, or shared with measured ones (`commonMain`). */
-        val MEASURED_OR_SHARED = setOf(KotlinPlatformType.jvm, KotlinPlatformType.common)
+        /** The suffix of Kotlin Multiplatform main source set names (`commonMain`, `jsMain`). */
+        const val MAIN_SUFFIX = "Main"
+
+        const val CHECK_REPORT = "verifyChangedCoverageReport"
 
         const val TESTKIT_JACOCO_PLUGIN = "io.github.gmazzo.gradle.testkit.jacoco"
         const val BASE_PROPERTY = "coverage.base"

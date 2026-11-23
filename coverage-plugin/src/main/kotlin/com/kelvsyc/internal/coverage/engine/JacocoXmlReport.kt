@@ -25,11 +25,16 @@ class JacocoXmlReport(
 ) {
     companion object {
         private const val LOAD_EXTERNAL_DTD = "http://apache.org/xml/features/nonvalidating/load-external-dtd"
+        private const val EXTERNAL_GENERAL_ENTITIES = "http://xml.org/sax/features/external-general-entities"
+        private const val EXTERNAL_PARAMETER_ENTITIES = "http://xml.org/sax/features/external-parameter-entities"
 
-        /** Parses [xml] without loading the report's external DTD. */
+        /** Parses [xml] without loading the report's external DTD or any external entity. */
         fun parse(xml: File): JacocoXmlReport {
             val factory = DocumentBuilderFactory.newInstance()
             factory.setFeature(LOAD_EXTERNAL_DTD, false)
+            factory.setFeature(EXTERNAL_GENERAL_ENTITIES, false)
+            factory.setFeature(EXTERNAL_PARAMETER_ENTITIES, false)
+            factory.isExpandEntityReferences = false
             factory.isValidating = false
             val root = factory.newDocumentBuilder().parse(xml).documentElement
 

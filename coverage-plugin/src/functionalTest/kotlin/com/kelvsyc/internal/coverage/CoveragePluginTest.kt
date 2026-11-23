@@ -289,8 +289,12 @@ class CoveragePluginTest {
             """.trimMargin(),
         )
         fixture.commit()
-        val output = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
-        assertTrue(output.contains("coverage: lib: PASSED"), output)
+        val result = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg)
+        assertTrue(result.output.contains("coverage: lib: PASSED"), result.output)
+        // The check reads its own XML-only report, never waiting for the HTML one.
+        assertNull(result.task(":coverageReport"), result.tasks.toString())
+        assertTrue(result.task(":verifyChangedCoverageReport") != null, result.tasks.toString())
+        assertFalse(File(fixture.project, "build/reports/jacoco/verifyChangedCoverageReport/html").exists())
     }
 
     @Test
@@ -376,8 +380,8 @@ class CoveragePluginTest {
     @Test
     fun staleReportIsNotReused() {
         val fixture = jvm.reset()
-        buildTwice(fixture.project, "coverageReport")
-        assertTrue(fixture.xml.isFile)
+        buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg)
+        assertTrue(File(fixture.project, CHECK_XML).isFile)
         File(fixture.project, "build/jacoco").listFiles { file -> file.extension == "exec" }.orEmpty()
             .forEach { it.delete() }
         // greet() is covered in the existing report; without execution data it must not count as covered.
@@ -388,7 +392,7 @@ class CoveragePluginTest {
         val output = failTwice(
             fixture.project, "verifyChangedCoverage", fixture.baseArg, "-Pcoverage.useExistingData=true",
         ).output
-        assertTrue(output.contains("No coverage data"), output)
+        assertTrue(output.contains("No coverage data: no test executed this project's code"), output)
     }
 
     @Test
@@ -399,11 +403,60 @@ class CoveragePluginTest {
     }
 
     @Test
-    fun multiplatformWithoutJvmTargetFails() {
+    fun multiplatformWithoutJvmTargetIsNotMeasurable() {
         val fixture = unmeasured.reset()
-        val output = failTwice(fixture.project, ":nojvm:verifyChangedCoverage", fixture.baseArg).output
-        assertTrue(output.contains("No JVM sources were found for coverage"), output)
-        assertTrue(output.contains("no JVM target"), output)
+        fixture.write("nojvm/src/commonMain/kotlin/com/example/Shared.kt", "package com.example\n\nfun shared() = 1\n")
+        val output = buildTwice(fixture.project, ":nojvm:verifyChangedCoverage", fixture.baseArg).output
+        assertTrue(output.contains("coverage: unmeasured:nojvm: PASSED"), output)
+        assertTrue(output.contains("Not measurable:\n  nojvm/src/commonMain/kotlin/com/example/Shared.kt:1-3"), output)
+    }
+
+    @Test
+    fun fileOutsideItsPackageDirectoryIsChecked() {
+        val fixture = jvm.reset()
+        // Kotlin allows a file's directory to omit its package's prefix.
+        fixture.write("src/main/kotlin/Foo.kt", "package com.example.deep\n\nfun foo(): Int = 1\n")
+        val output = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
+        assertTrue(output.contains("lib/src/main/kotlin/Foo.kt:3 foo"), output)
+    }
+
+    @Test
+    fun exemptedClassPasses() {
+        val fixture = jvm.reset()
+        fixture.write(
+            "src/main/kotlin/com/example/Glue.kt",
+            """
+            |package com.example
+            |
+            |// coverage-exempt: platform glue
+            |class Glue(val name: String) {
+            |    fun describe(): String = "glue " + name
+            |
+            |    class Nested {
+            |        fun nested(): Int = 1
+            |    }
+            |}
+            """.trimMargin(),
+        )
+        val output = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
+        assertTrue(output.contains("coverage: lib: PASSED"), output)
+    }
+
+    @Test
+    fun shallowCloneFailsWithAHint() {
+        val fixture = jvm.reset()
+        fixture.write("src/main/kotlin/com/example/Extra.kt", "package com.example\n\nfun extra(): Int = 2\n")
+        fixture.commit()
+        val clone = File(root, "shallow")
+        clone.deleteRecursively()
+        val process = ProcessBuilder("git", "clone", "--depth", "1", "file://${fixture.repo.absolutePath}", clone.path)
+            .redirectErrorStream(true).start()
+        val cloneOutput = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), cloneOutput)
+        val output = failTwice(File(clone, "lib"), "verifyChangedCoverage", "-Pcoverage.base=HEAD~1").output
+        assertTrue(output.contains("shallow clone: check out with fetch-depth: 0"), output)
+        val message = output.lines().first { "Cannot find the merge base" in it }
+        assertFalse(message.contains("()"), message)
     }
 
     // Helpers ---------------------------------------------------------------------------------------------------------
@@ -512,6 +565,9 @@ class CoveragePluginTest {
 
     private companion object {
         const val CONFIGURATION_CACHE_REUSED = "Configuration cache entry reused."
+
+        /** The XML report `verifyChangedCoverage` reads, relative to the project. */
+        const val CHECK_XML = "build/reports/jacoco/verifyChangedCoverageReport/verifyChangedCoverageReport.xml"
 
         /** A repository declaration resolving every `com.kelvsyc.internal` artifact and plugin from Maven Local. */
         const val MAVEN_LOCAL_CONVENTIONS = """exclusiveContent {

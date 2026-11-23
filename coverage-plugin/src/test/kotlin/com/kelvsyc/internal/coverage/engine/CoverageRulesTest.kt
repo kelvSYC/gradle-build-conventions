@@ -17,7 +17,8 @@ class CoverageRulesTest {
         lines: IntRange = 10..14,
         publicApi: Boolean = true,
         inline: Boolean = false,
-    ) = Declaration("com/a/Foo", name, "()V", key, lines, publicApi, inline)
+        className: String = "com/a/Foo",
+    ) = Declaration(className, name, "()V", key, lines, publicApi, inline)
 
     private fun report(
         methodCovered: Boolean? = null,
@@ -37,7 +38,9 @@ class CoverageRulesTest {
         exemptions: List<Exemption> = emptyList(),
         invalid: List<InvalidMarker> = emptyList(),
         settings: RuleSettings = RuleSettings(),
-    ) = evaluate(changed, report, declarations, exemptions, invalid, roots, settings)
+        sourceKeys: Map<String, String> = emptyMap(),
+        hasExecutionData: Boolean = true,
+    ) = evaluate(changed, report, declarations, exemptions, invalid, roots, settings, sourceKeys, hasExecutionData)
 
     private fun branchLine(covered: Int, missed: Int) = LineCoverage(1, 1, missed, covered)
 
@@ -256,5 +259,77 @@ class CoverageRulesTest {
     @Test
     fun renderStartsWithPassed() {
         assertEquals("coverage: proj: PASSED", eval(changed(10), report(true), listOf(decl())).render("proj").lines().first())
+    }
+
+    @Test
+    fun fileOutsideItsPackageDirectoryIsKeyedByItsPackage() {
+        val file = "$root/Foo.kt"
+        val result = eval(changed(10, file = file), report(false), listOf(decl()), sourceKeys = mapOf(file to key))
+        assertFalse(result.passed)
+        assertEquals(listOf(decl()), result.uncoveredPublicApi)
+        assertTrue(result.render("p").contains("$file:10"))
+    }
+
+    @Test
+    fun lineTargetDoesNotExemptTheEnclosingFunction() {
+        val exemption = Exemption(repoFile, 11, "unreachable", true, MarkerTarget.Line(12))
+        val result = eval(
+            changed(10, 12),
+            report(false, lines = mapOf(12 to branchLine(0, 4))),
+            listOf(decl()),
+            exemptions = listOf(exemption),
+        )
+        assertEquals(listOf(decl()), result.uncoveredPublicApi)
+        assertEquals(0, result.branchesTotal)
+        assertEquals(listOf(exemption), result.exemptions)
+    }
+
+    @Test
+    fun classTargetExemptsEveryMemberAndNestedClass() {
+        val members = listOf(
+            decl(name = "<init>", lines = 3..3),
+            decl(name = "f"),
+            decl(name = "g", lines = 20..21, className = "com/a/Foo\$Nested"),
+        )
+        val other = decl(name = "h", lines = 30..31, className = "com/a/FooKt")
+        val exemption = Exemption(repoFile, 2, "generated", true, MarkerTarget.Class(3, "Foo"))
+        val result = eval(changed(3, 10, 20, 30), report(false), members + other, exemptions = listOf(exemption))
+        assertEquals(listOf(other), result.uncoveredPublicApi)
+    }
+
+    @Test
+    fun functionTargetExemptsTheFunctionAndItsLambdas() {
+        val lambda = decl(name = "f\$lambda\$0", lines = 12..13, publicApi = false, className = "com/a/Foo")
+        val exemption = Exemption(repoFile, 8, "glue", true, MarkerTarget.Function(9))
+        val result = eval(
+            changed(10, 13),
+            report(false, lines = mapOf(13 to branchLine(0, 4))),
+            listOf(decl(), lambda),
+            exemptions = listOf(exemption),
+        )
+        assertTrue(result.passed)
+        assertEquals(0, result.branchesTotal)
+    }
+
+    @Test
+    fun lineTargetBeforeLambdaDoesNotExemptTheLambdaBeyondItsLine() {
+        val lambda = decl(name = "f\$lambda\$0", lines = 12..13, publicApi = false)
+        val exemption = Exemption(repoFile, 11, "r", true, MarkerTarget.Line(12))
+        val result = eval(
+            changed(12, 13),
+            report(true, lines = mapOf(12 to branchLine(0, 2), 13 to branchLine(1, 3))),
+            listOf(decl(), lambda),
+            exemptions = listOf(exemption),
+        )
+        assertEquals(4, result.branchesTotal)
+        assertFalse(result.passed)
+    }
+
+    @Test
+    fun noExecutionDataSaysNoTestRan() {
+        val empty = JacocoXmlReport(emptyMap(), emptyList())
+        val result = eval(changed(10), empty, listOf(decl()), hasExecutionData = false)
+        assertFalse(result.passed)
+        assertTrue(result.render("p").contains("no test executed this project's code"))
     }
 }

@@ -69,4 +69,17 @@ class ChangedLinesTest {
         """.trimIndent()
         assertEquals(setOf(2, 3), ChangedLines.parseUnifiedDiff(diff, emptyMap()).byFile.getValue("src/A.kt"))
     }
+
+    @Test
+    fun addedLinesThatLookLikeHeadersAreAddedLines() {
+        val diff = listOf(
+            "diff --git a/src/A.kt b/src/A.kt",
+            "--- a/src/A.kt",
+            "+++ b/src/A.kt",
+            "@@ -1,0 +2,2 @@",
+            "+++ b/src/Other.kt",
+            "+rename to src/Else.kt",
+        ).joinToString("\n")
+        assertEquals(mapOf("src/A.kt" to setOf(2, 3)), ChangedLines.parseUnifiedDiff(diff, emptyMap()).byFile)
+    }
 }

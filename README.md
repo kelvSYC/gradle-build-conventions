@@ -129,7 +129,7 @@ Dokka bundles Jackson, jsoup and FreeMarker at versions with known vulnerabiliti
 
 ### Coverage
 
-`com.kelvsyc.internal.coverage` is applied next to a Kotlin convention, in every project with JVM tests:
+`com.kelvsyc.internal.coverage` is applied next to a shared Kotlin convention:
 
 ```kotlin
 plugins {
@@ -137,6 +137,8 @@ plugins {
     id("com.kelvsyc.internal.coverage")
 }
 ```
+
+In a composite build, apply it to every included build that applies a shared Kotlin convention, not only some of them. Builds whose plugin classpaths are identical share one classloader; applying the plugin in only some builds splits them, which raises daemon metaspace (see AGENTS.md).
 
 It applies JaCoCo, at the shared catalog's `jacoco` version, to every test task (`test`, and `jvmTest` in Kotlin Multiplatform projects), and adds two tasks. Neither is part of `check`.
 
@@ -146,19 +148,32 @@ It applies JaCoCo, at the shared catalog's `jacoco` version, to every test task 
   2. at least 75% of the branches on changed lines are covered, once the project's changed lines hold at least 4 branches;
   3. every exemption marker on a changed line gives a reason.
 
-  Line coverage of changed lines is reported but never fails the check. In a project without JVM sources (no Kotlin JVM plugin, or Kotlin Multiplatform without a JVM target) the check fails instead of passing on an empty diff: apply the plugin only to projects with JVM tests. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`.
+  Line coverage of changed lines is reported but never fails the check. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`. The check reads its own XML-only report (`verifyChangedCoverageReport`), so it never waits for the HTML report.
 
-The changes are the working tree, including uncommitted and untracked files, against the merge base of `HEAD` and `origin/main`, restricted to the project's main sources. Pass another base with the Gradle property `coverage.base` (`-Pcoverage.base=<ref>`); if git cannot find the merge base (for example in a shallow clone without `origin/main`), the check fails rather than passing on an empty diff.
+  A Kotlin Multiplatform project without a JVM target passes, listing its changed main sources as not measurable. A project that applies neither the Kotlin JVM nor the Kotlin Multiplatform plugin fails, rather than passing on an empty diff. Source files are matched to their classes by their `package` declaration, so a file whose directory omits part of its package is still checked.
 
-To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests, though it still compiles the main classes. Without any execution data the check reports no coverage data for the changed files, rather than reading an earlier report.
+The changes are the working tree, including uncommitted and untracked files, against the merge base of `HEAD` and `origin/main`, restricted to the project's main sources. Pass another base with the Gradle property `coverage.base` (`-Pcoverage.base=<ref>`); if git cannot find the merge base, the check fails rather than passing on an empty diff. In a shallow clone (such as a default `actions/checkout`), check out with `fetch-depth: 0` or fetch the base first.
 
-Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. The marker exempts the line it is on, or, alone on the line before a declaration, that whole declaration:
+To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests, though it still compiles the main classes. Without any execution data the check reports that no test executed the project's code, rather than reading an earlier report.
+
+Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. At the end of a line, the marker exempts that line (and a declaration whose code starts on it). Alone on a line, it exempts what the next line of code starts, skipping blank lines, comments and annotations:
+
+- a `class`, `interface` or `object`: all of its members, constructors and nested classes;
+- a `fun` or `constructor`: that function, including its lambdas and local functions;
+- an `init` block: the block's lines;
+- anything else, including a `val` or `var` (which may be local): that line only.
 
 ```kotlin
 // coverage-exempt: unreachable, the caller validates the input
 fun fallback(): Nothing = error("unreachable")
 
-val home = System.getenv("HOME") ?: error("no HOME") // coverage-exempt: always set on supported platforms
+fun home(): String {
+    // coverage-exempt: always set on supported platforms
+    val home = System.getenv("HOME") ?: error("no HOME")
+    return home
+}
+
+val user = System.getenv("USER") ?: "unknown" // coverage-exempt: always set on supported platforms
 ```
 
 A marker without a reason fails the check.
