@@ -146,11 +146,11 @@ It applies JaCoCo, at the shared catalog's `jacoco` version, to every test task 
   2. at least 75% of the branches on changed lines are covered, once the project's changed lines hold at least 4 branches;
   3. every exemption marker on a changed line gives a reason.
 
-  Line coverage of changed lines is reported but never fails the check. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`.
+  Line coverage of changed lines is reported but never fails the check. In a project without JVM sources (no Kotlin JVM plugin, or Kotlin Multiplatform without a JVM target) the check fails instead of passing on an empty diff: apply the plugin only to projects with JVM tests. The result is printed and written to `build/reports/coverage/verifyChangedCoverage.txt`.
 
 The changes are the working tree, including uncommitted and untracked files, against the merge base of `HEAD` and `origin/main`, restricted to the project's main sources. Pass another base with the Gradle property `coverage.base` (`-Pcoverage.base=<ref>`); if git cannot find the merge base (for example in a shallow clone without `origin/main`), the check fails rather than passing on an empty diff.
 
-To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests.
+To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests, though it still compiles the main classes. Without any execution data the check reports no coverage data for the changed files, rather than reading an earlier report.
 
 Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. The marker exempts the line it is on, or, alone on the line before a declaration, that whole declaration:
 

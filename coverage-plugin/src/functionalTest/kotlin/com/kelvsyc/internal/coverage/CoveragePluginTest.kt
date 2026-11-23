@@ -174,6 +174,33 @@ class CoveragePluginTest {
         Fixture(repo, repo, Git.open(repo).use { it.repository.resolve("HEAD").name })
     }
 
+    /**
+     * Projects the check cannot measure: `plain` applies no Kotlin plugin, and `nojvm` is Kotlin Multiplatform
+     * without a JVM target.
+     */
+    private val unmeasured: Fixture by lazy {
+        val repo = fixture(
+            "unmeasured",
+            buildScript = """
+                |plugins {
+                |    id("com.kelvsyc.internal.kotlin-multiplatform-base") apply false
+                |    id("com.kelvsyc.internal.coverage") apply false
+                |}
+            """.trimMargin(),
+            settingsBody = "include(\"plain\", \"nojvm\")",
+            files = mapOf(
+                "plain/build.gradle.kts" to "plugins {\n    base\n    id(\"com.kelvsyc.internal.coverage\")\n}\n",
+                "nojvm/build.gradle.kts" to """
+                    |plugins {
+                    |    id("com.kelvsyc.internal.kotlin-multiplatform-base")
+                    |    id("com.kelvsyc.internal.coverage")
+                    |}
+                """.trimMargin(),
+            ),
+        )
+        Fixture(repo, repo, Git.open(repo).use { it.repository.resolve("HEAD").name })
+    }
+
     // Report ---------------------------------------------------------------------------------------------------------
 
     @Test
@@ -197,7 +224,7 @@ class CoveragePluginTest {
             "src/commonMain/kotlin/com/example/Farewell.kt",
             "package com.example\n\nfun farewell(): String = \"bye\"\n",
         )
-        val output = failTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}").output
+        val output = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
         assertTrue(output.contains("Uncovered public API"), output)
         assertTrue(output.contains("src/commonMain/kotlin/com/example/Farewell.kt"), output)
     }
@@ -235,7 +262,7 @@ class CoveragePluginTest {
         val fixture = jvm.reset()
         fixture.write("src/main/kotlin/com/example/Extra.kt", "package com.example\n\nfun extra(): Int = 2\n")
         fixture.commit()
-        val result = failTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}")
+        val result = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg)
         assertTrue(result.output.contains("coverage: lib: FAILED"), result.output)
         assertTrue(result.output.contains("Uncovered public API"), result.output)
         // Paths are relative to the repository, not the project.
@@ -262,7 +289,7 @@ class CoveragePluginTest {
             """.trimMargin(),
         )
         fixture.commit()
-        val output = buildTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}").output
+        val output = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
         assertTrue(output.contains("coverage: lib: PASSED"), output)
     }
 
@@ -274,7 +301,7 @@ class CoveragePluginTest {
             "package com.example\n\n// coverage-exempt: platform glue\nfun extra(): Int = 2\n",
         )
         fixture.commit()
-        val output = buildTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}").output
+        val output = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
         assertTrue(output.contains("coverage: lib: PASSED"), output)
         assertTrue(output.contains("platform glue"), output)
     }
@@ -286,7 +313,7 @@ class CoveragePluginTest {
             "src/main/kotlin/com/example/Greeter.kt",
             "package com.example\n\nfun greet(): String = \"hello\"\n\nfun untested(): Int = 3\n",
         )
-        val output = failTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}").output
+        val output = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
         assertTrue(output.contains("lib/src/main/kotlin/com/example/Greeter.kt:5 untested"), output)
     }
 
@@ -326,13 +353,57 @@ class CoveragePluginTest {
             """.trimMargin(),
         )
         fixture.commit()
-        val failed = failTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}").output
+        val failed = failTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
         assertTrue(failed.contains("Branches on changed lines: 2/4 (50%) (below floor)"), failed)
 
         File(fixture.project, "build.gradle.kts").appendText("\nkelvsycCoverage {\n    branchFloor = 0.5\n}\n")
-        val passed = buildTwice(fixture.project, "verifyChangedCoverage", "-Pcoverage.base=${fixture.base}").output
+        val passed = buildTwice(fixture.project, "verifyChangedCoverage", fixture.baseArg).output
         assertTrue(passed.contains("coverage: lib: PASSED"), passed)
         assertFalse(passed.contains("below floor"), passed)
+    }
+
+    @Test
+    fun useExistingDataStillCompiles() {
+        val fixture = jvm.reset()
+        buildTwice(fixture.project, "test")
+        fixture.write("src/main/kotlin/com/example/Extra.kt", "package com.example\n\nfun extra(): Int = 2\n")
+        val output = failTwice(
+            fixture.project, "verifyChangedCoverage", fixture.baseArg, "-Pcoverage.useExistingData=true",
+        ).output
+        assertTrue(output.contains("lib/src/main/kotlin/com/example/Extra.kt:3 extra"), output)
+    }
+
+    @Test
+    fun staleReportIsNotReused() {
+        val fixture = jvm.reset()
+        buildTwice(fixture.project, "coverageReport")
+        assertTrue(fixture.xml.isFile)
+        File(fixture.project, "build/jacoco").listFiles { file -> file.extension == "exec" }.orEmpty()
+            .forEach { it.delete() }
+        // greet() is covered in the existing report; without execution data it must not count as covered.
+        fixture.write(
+            "src/main/kotlin/com/example/Greeter.kt",
+            "package com.example\n\nfun greet(): String = \"hi\"\n\nfun untested(): Int = 1",
+        )
+        val output = failTwice(
+            fixture.project, "verifyChangedCoverage", fixture.baseArg, "-Pcoverage.useExistingData=true",
+        ).output
+        assertTrue(output.contains("No coverage data"), output)
+    }
+
+    @Test
+    fun projectWithoutKotlinFails() {
+        val fixture = unmeasured.reset()
+        val output = failTwice(fixture.project, ":plain:verifyChangedCoverage", fixture.baseArg).output
+        assertTrue(output.contains("No JVM sources were found for coverage"), output)
+    }
+
+    @Test
+    fun multiplatformWithoutJvmTargetFails() {
+        val fixture = unmeasured.reset()
+        val output = failTwice(fixture.project, ":nojvm:verifyChangedCoverage", fixture.baseArg).output
+        assertTrue(output.contains("No JVM sources were found for coverage"), output)
+        assertTrue(output.contains("no JVM target"), output)
     }
 
     // Helpers ---------------------------------------------------------------------------------------------------------
@@ -340,6 +411,9 @@ class CoveragePluginTest {
     /** A fixture repository [repo] with its project in [project], committed at [base]. */
     private class Fixture(val repo: File, val project: File, val base: String) {
         val xml: File get() = File(project, "build/reports/jacoco/coverageReport/coverageReport.xml")
+
+        /** The Gradle argument selecting [base] as the diff base. */
+        val baseArg: String get() = "-Pcoverage.base=$base"
 
         /** Restores the working tree and `HEAD` to [base], keeping ignored files (the build outputs). */
         fun reset(): Fixture = apply {
@@ -369,11 +443,12 @@ class CoveragePluginTest {
         name: String,
         buildScript: String,
         project: String = "",
+        settingsBody: String = "",
         files: Map<String, String> = emptyMap(),
     ): File {
         val repo = File(root, name).apply { mkdirs() }
         val dir = File(repo, project).apply { mkdirs() }
-        File(dir, "settings.gradle.kts").writeText(settingsScript(project.ifEmpty { name }))
+        File(dir, "settings.gradle.kts").writeText(settingsScript(project.ifEmpty { name }) + "\n$settingsBody\n")
         File(dir, "build.gradle.kts").writeText(buildScript)
         File(dir, "gradle.properties").writeText("org.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=768m\n")
         files.forEach { (path, content) -> File(dir, path).apply { parentFile.mkdirs() }.writeText(content) }

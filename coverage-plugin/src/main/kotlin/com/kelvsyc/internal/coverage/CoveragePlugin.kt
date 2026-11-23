@@ -31,10 +31,11 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinTarget
  *
  * `coverageReport` reads every `.exec` file in `build/jacoco` against the JVM main classes and their sources: `main`
  * for Kotlin JVM projects, the JVM targets' main compilations (`commonMain`, `jvmMain` and their other source sets)
- * for Kotlin Multiplatform. It depends on every `Test` task, unless the Gradle property `coverage.useExistingData` is
- * `true`, in which case it reads the execution data already on disk. The check diffs the working tree against the
- * merge base of `HEAD` and the Gradle property `coverage.base` (default `origin/main`), restricted to those sources
- * and, for Kotlin Multiplatform, the other targets' main sources, which are reported as not measurable.
+ * for Kotlin Multiplatform. The classes are always compiled. It depends on every `Test` task, unless the Gradle
+ * property `coverage.useExistingData` is `true`, in which case it reads the execution data already on disk. The check
+ * diffs the working tree against the merge base of `HEAD` and the Gradle property `coverage.base` (default
+ * `origin/main`), restricted to those sources and, for Kotlin Multiplatform, the other targets' main sources, which
+ * are reported as not measurable. It fails in a project without JVM sources.
  */
 class CoveragePlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -55,8 +56,9 @@ class CoveragePlugin : Plugin<Project> {
         val notMeasuredSources = project.files()
         project.pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
             val kotlin = project.extensions.getByType(KotlinJvmProjectExtension::class.java)
-            val buildDir = project.layout.buildDirectory
-            classDirs.from(buildDir.dir("classes/kotlin/main"), buildDir.dir("classes/java/main"))
+            kotlin.target.compilations.configureEach {
+                if (name == KotlinCompilation.MAIN_COMPILATION_NAME) classDirs.from(output.classesDirs)
+            }
             measuredSources.from(project.provider { kotlin.sourceSets.getByName("main").kotlin.srcDirs })
             project.pluginManager.withPlugin("java") {
                 val java = project.extensions.getByType(JavaPluginExtension::class.java)
@@ -73,10 +75,11 @@ class CoveragePlugin : Plugin<Project> {
         // Set rather than read from the report: a report's output location does not survive the configuration cache
         // as another task's input.
         val xmlReport = project.layout.buildDirectory.file("reports/jacoco/coverageReport/coverageReport.xml")
+        val execFiles = project.fileTree(project.layout.buildDirectory.dir("jacoco")) { include("*.exec") }
         val report = project.tasks.register("coverageReport", JacocoReport::class.java) {
             group = LifecycleBasePlugin.VERIFICATION_GROUP
             description = "Generates the JaCoCo report of the JVM main classes from every build/jacoco/*.exec."
-            executionData.from(project.fileTree(project.layout.buildDirectory.dir("jacoco")) { include("*.exec") })
+            executionData.from(execFiles)
             classDirectories.from(classDirs)
             sourceDirectories.from(measuredSources)
             reports.xml.required.set(true)
@@ -86,12 +89,22 @@ class CoveragePlugin : Plugin<Project> {
             if (useExistingData) mustRunAfter(testTasks) else dependsOn(testTasks)
         }
 
+        val noSourcesReason = project.provider {
+            if (project.pluginManager.hasPlugin("org.jetbrains.kotlin.multiplatform")) {
+                "the Kotlin Multiplatform project has no JVM target; do not apply com.kelvsyc.internal.coverage to it"
+            } else {
+                "the project applies neither the Kotlin JVM nor the Kotlin Multiplatform plugin"
+            }
+        }
         val projectName = if (project.path == ":") project.name else project.rootProject.name + project.path
         project.tasks.register("verifyChangedCoverage", VerifyChangedCoverage::class.java) {
             group = LifecycleBasePlugin.VERIFICATION_GROUP
             description = "Checks that the code changed since the coverage.base merge base is tested."
             dependsOn(report)
             jacocoXml.set(xmlReport)
+            executionData.from(execFiles)
+            measuredSourceDirectories.from(measuredSources)
+            this.noSourcesReason.set(noSourcesReason)
             classDirectories.from(classDirs)
             branchFloor.set(extension.branchFloor)
             minimumBranches.set(extension.minimumBranches)
@@ -117,11 +130,13 @@ class CoveragePlugin : Plugin<Project> {
         val kotlin = project.extensions.getByType(KotlinMultiplatformExtension::class.java)
         val jvmTargets = { kotlin.targets.filter { it.platformType == KotlinPlatformType.jvm } }
         val measuredSets = { jvmTargets().flatMap { it.mainSourceSets() }.toSet() }
-        classDirs.from(
-            project.provider {
-                jvmTargets().map { project.layout.buildDirectory.dir("classes/kotlin/${it.name}/main").get() }
-            },
-        )
+        kotlin.targets.configureEach {
+            if (platformType == KotlinPlatformType.jvm) {
+                compilations.configureEach {
+                    if (name == KotlinCompilation.MAIN_COMPILATION_NAME) classDirs.from(output.classesDirs)
+                }
+            }
+        }
         measuredSources.from(project.provider { measuredSets().flatMap { it.kotlin.srcDirs } })
         notMeasuredSources.from(
             project.provider {
