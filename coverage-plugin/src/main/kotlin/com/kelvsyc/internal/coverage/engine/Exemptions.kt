@@ -45,13 +45,13 @@ fun scanExemptions(file: String, text: String): ExemptionScan {
 private fun nextCodeLine(lines: List<String>, start: Int): Int? {
     var inBlockComment = false
     for (index in start until lines.size) {
-        val trimmed = lines[index].trim()
-        when {
-            inBlockComment -> if ("*/" in trimmed) inBlockComment = false
-            trimmed.startsWith("/*") -> if ("*/" !in trimmed) inBlockComment = true
-            trimmed.isEmpty() || trimmed.startsWith("//") || ANNOTATIONS_ONLY.matches(trimmed) -> Unit
-            else -> return index + 1
+        var code = lines[index].trim()
+        if (inBlockComment || code.startsWith("/*")) {
+            // The code after the block comment closes, if it closes on this line.
+            inBlockComment = "*/" !in code
+            code = code.substringAfter("*/", "").trim()
         }
+        if (code.isNotEmpty() && !code.startsWith("//") && !ANNOTATIONS_ONLY.matches(code)) return index + 1
     }
     return null
 }

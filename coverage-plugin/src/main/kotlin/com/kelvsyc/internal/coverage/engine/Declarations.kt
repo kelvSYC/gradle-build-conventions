@@ -31,11 +31,14 @@ private const val ASM_API = Opcodes.ASM9
 /** A method's name and descriptor, and its own source lines. */
 private class MethodLines(val signature: String, val lines: Set<Int>)
 
+/** [enclosingClass] and [enclosingMethod] (name and descriptor) come from the class's `EnclosingMethod` attribute. */
 private class ClassInfo(
     val name: String,
     val sourceFile: String?,
     val methods: List<MethodLines>,
     val metadata: Metadata?,
+    val enclosingClass: String?,
+    val enclosingMethod: String?,
 )
 
 /**
@@ -48,17 +51,21 @@ fun scanCompiled(classDirs: List<File>): CompiledFacts {
     val classFiles = classDirs.flatMap { dir ->
         dir.walkTopDown().filter { it.isFile && it.extension == "class" && it.name != "module-info.class" }.toList()
     }
-    val classes = classFiles.map { readClass(it) }.filter { it.methods.isNotEmpty() }
-    val inline = classes.associate { it.name to inlineSignatures(it.metadata) }
-    // Classes generated inside an inline function are named after it: `Owner$function$1`.
-    val regeneratedPrefixes = inline.flatMap { (owner, signatures) -> signatures.map { "$owner\$${it.name}\$" } }
-    for (cls in classes) {
+    val classes = classFiles.map { readClass(it) }.associateBy { it.name }
+    val inline = classes.mapValues { (_, cls) -> inlineSignatures(cls.metadata).map { it.name + it.descriptor } }
+
+    // A class declared in an inline function, or in a class declared there, is regenerated at each call site.
+    fun regenerated(cls: ClassInfo): Boolean {
+        val outer = classes[cls.enclosingClass ?: return false] ?: return false
+        return cls.enclosingMethod in inline.getValue(outer.name) || regenerated(outer)
+    }
+
+    for (cls in classes.values.filter { it.methods.isNotEmpty() }) {
         val sourceFile = cls.sourceFile ?: continue
         val key = if ('/' in cls.name) cls.name.substringBeforeLast('/') + "/" + sourceFile else sourceFile
         compiledSourceFiles.add(key)
-        val regenerated = regeneratedPrefixes.any { cls.name.startsWith(it) }
-        val signatures = inline.getValue(cls.name).map { it.name + it.descriptor }
-        for (method in cls.methods.filter { regenerated || it.signature in signatures }) {
+        val isRegenerated = regenerated(cls)
+        for (method in cls.methods.filter { isRegenerated || it.signature in inline.getValue(cls.name) }) {
             inlineLines.getOrPut(key) { mutableSetOf() }.addAll(method.lines)
         }
     }
@@ -90,6 +97,8 @@ private fun readClass(file: File): ClassInfo {
     var sourceFile: String? = null
     var inlined: List<IntRange> = emptyList()
     var metadata: Metadata? = null
+    var enclosingClass: String? = null
+    var enclosingMethod: String? = null
     val methods = mutableListOf<MethodLines>()
 
     val visitor = object : ClassVisitor(ASM_API) {
@@ -100,6 +109,11 @@ private fun readClass(file: File): ClassInfo {
         override fun visitSource(source: String?, debug: String?) {
             sourceFile = source
             inlined = inlinedRanges(debug)
+        }
+
+        override fun visitOuterClass(owner: String, method: String?, descriptor: String?) {
+            enclosingClass = owner
+            enclosingMethod = method?.let { it + descriptor }
         }
 
         override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor? =
@@ -122,7 +136,7 @@ private fun readClass(file: File): ClassInfo {
         }
     }
     ClassReader(file.readBytes()).accept(visitor, ClassReader.SKIP_FRAMES)
-    return ClassInfo(name, sourceFile, methods, metadata)
+    return ClassInfo(name, sourceFile, methods, metadata, enclosingClass, enclosingMethod)
 }
 
 private const val OWN_FILE_ID = 1

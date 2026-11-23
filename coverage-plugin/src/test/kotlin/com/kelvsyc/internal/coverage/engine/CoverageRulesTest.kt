@@ -136,6 +136,14 @@ class CoverageRulesTest {
     }
 
     @Test
+    fun noBranchesMeetTheFloorWithoutAMinimum() {
+        val result = eval(changed(10), report(10 to covered), settings = RuleSettings(minimumBranches = 0))
+        assertEquals(0, result.branchesTotal)
+        assertTrue(result.branchFloorMet)
+        assertTrue(result.passed)
+    }
+
+    @Test
     fun linesAreCountedByCoveredInstructions() {
         val result = eval(changed(10, 11, 12), report(10 to covered, 11 to uncovered, 50 to covered))
         assertEquals(1, result.linesCovered)

@@ -40,6 +40,18 @@ class ExemptionsTest {
     }
 
     @Test
+    fun markerAboveAnnotatedCodeTargetsThatLine() {
+        val scan = scanExemptions("A.kt", "// coverage-exempt: r\n@Suppress(\"x\") fun f() = 1\n")
+        assertEquals(setOf(2), scan.exemptLines)
+    }
+
+    @Test
+    fun codeAfterABlockCommentIsTheTarget() {
+        assertEquals(setOf(2), scanExemptions("A.kt", "// coverage-exempt: r\n/* note */ call()\n").exemptLines)
+        assertEquals(setOf(3), scanExemptions("A.kt", "// coverage-exempt: r\n/* a\n   b */ call()\n").exemptLines)
+    }
+
+    @Test
     fun markerAboveMultiLineAnnotationTargetsItsFirstLine() {
         val scan = scanExemptions("A.kt", "// coverage-exempt: r\n@Suppress(\n    \"x\",\n)\nval x = 1\n")
         assertEquals(setOf(2), scan.exemptLines)

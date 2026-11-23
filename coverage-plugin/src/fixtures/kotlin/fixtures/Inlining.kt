@@ -29,3 +29,13 @@ inline fun deferred(crossinline block: () -> Int): () -> Int {
         value + 1
     }
 }
+
+inline fun overloaded(block: () -> Unit) {
+    block()
+}
+
+fun overloaded(x: Int): Runnable = object : Runnable {
+    override fun run() {
+        println(x)
+    }
+}

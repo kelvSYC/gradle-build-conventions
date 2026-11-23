@@ -158,10 +158,9 @@ The changes are the working tree, including uncommitted and untracked files, aga
 
 To check coverage data that is already on disk, for example execution data and classes collected from CI shards, pass `-Pcoverage.useExistingData=true`: `coverageReport` then runs no tests, though it still compiles the main classes. Without any execution data the check reports that no test executed the project's code, rather than reading an earlier report.
 
-Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. A marker at the end of a line exempts that line; a marker alone on a line exempts the next line of code, skipping blank lines, comments and lines holding only annotations. A marker exempts one line only: to exempt a whole declaration, mark each of its lines with code. Limits of this line matching, each of which fails the check rather than silently passing it:
+Code that cannot be tested is exempted in the source, with a reason, so the exemption shows in the diff. A marker at the end of a line exempts that line; a marker alone on a line exempts the next line of code, skipping blank lines, comments and lines holding only annotations (code after a block comment, as in `/* note */ call()`, is a line of code). A marker exempts one line only: to exempt a whole declaration, mark each of its lines with code. Known limits, each of which fails the check rather than passing it silently:
 
 - above an annotation whose arguments span several lines, a standalone marker targets the annotation's first line, not the code after it: put the marker at the end of the line to exempt instead;
-- a standalone marker above a line that starts with a block comment, such as `/* note */ call()`, skips that line as a comment: put the marker at the end of that line instead;
 - an `inline` function with default arguments compiles a `$default` bridge whose instructions sit on its signature line and never execute in place: mark that line.
 
 ```kotlin
@@ -180,7 +179,7 @@ val user = System.getenv("USER") ?: "unknown" // coverage-exempt: always set on 
 
 A marker without a reason fails the check.
 
-Some changed lines cannot be measured, and are listed under "Not measurable" instead of failing the check: lines of `inline` function and property accessor bodies, which JaCoCo attributes to their callers (found from the compiled classes' Kotlin metadata), including the lambdas and anonymous objects inside them, which are regenerated at each call site, and Kotlin Multiplatform sources compiled only for JS or native targets.
+Some changed lines cannot be measured, and are listed under "Not measurable" instead of failing the check: lines of `inline` function and property accessor bodies, which JaCoCo attributes to their callers (found from the compiled classes' Kotlin metadata), including the lambdas, anonymous objects and local classes declared inside them (by their `EnclosingMethod`), which are regenerated at each call site, and Kotlin Multiplatform sources compiled only for JS or native targets.
 
 The thresholds are set per project:
 

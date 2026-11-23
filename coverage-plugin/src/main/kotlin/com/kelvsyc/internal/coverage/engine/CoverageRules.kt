@@ -41,9 +41,9 @@ data class CoverageResult(
     val changedMeasuredLines: Int,
     val settings: RuleSettings,
 ) {
-    /** True when the changed lines hold fewer than the minimum branches, or enough of them are covered. */
+    /** True when the changed lines hold no branches, fewer than the minimum, or enough covered ones. */
     val branchFloorMet: Boolean
-        get() = branchesTotal < settings.minimumBranches ||
+        get() = branchesTotal == 0 || branchesTotal < settings.minimumBranches ||
             branchesCovered.toDouble() / branchesTotal >= settings.branchFloor
 
     /**

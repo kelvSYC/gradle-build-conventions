@@ -18,8 +18,25 @@ class DeclarationsTest {
     @Test
     fun inlineLinesAreTheInlineBodiesOwnLines() {
         // The bodies of twice, sum (without the lines SMAP maps forEach to), the doubled getter, and deferred with the
-        // lambda it returns, which compiles to its own class.
-        assertEquals(setOf(4, 5, 6, 9, 10, 11, 24, 27, 28, 29), compiled.inlineLines[key])
+        // lambda it returns, which compiles to its own class, and the inline overloaded(() -> Unit).
+        assertEquals(setOf(4, 5, 6, 9, 10, 11, 24, 27, 28, 29, 34, 35), compiled.inlineLines[key])
+    }
+
+    @Test
+    fun classesOfANonInlineOverloadAreJudged() {
+        // The anonymous object in the non-inline overloaded(Int), InliningKt$overloaded$1, is not regenerated.
+        val path = "src/main/kotlin/fixtures/Inlining.kt"
+        val uncovered = LineCoverage(1, 0, 0, 0)
+        val result = evaluate(
+            ChangedLines(mapOf(path to setOf(39))),
+            JacocoXmlReport(mapOf(key to mapOf(39 to uncovered))),
+            compiled,
+            mapOf(path to ExemptionScan(emptyList(), emptyList(), "fixtures")),
+            SourceRoots(listOf("src/main/kotlin"), emptyList()),
+            RuleSettings(),
+        )
+        assertEquals(listOf("$path:39"), result.uncoveredLines)
+        assertEquals(emptyList<String>(), result.notMeasurable)
     }
 
     @Test
