@@ -9,17 +9,12 @@ plugins {
 subprojects {
     pluginManager.withPlugin("maven-publish") {
         extensions.configure<PublishingExtension> {
-            repositories {
-                maven {
-                    name = "GitHubPackages"
-                    url = uri("https://maven.pkg.github.com/kelvSYC/gradle-build-conventions")
-                    credentials {
-                        username = providers.gradleProperty("gpr.user")
-                            .orElse(providers.environmentVariable("GITHUB_ACTOR")).orNull
-                        password = providers.gradleProperty("gpr.key")
-                            .orElse(providers.environmentVariable("GITHUB_TOKEN")).orNull
-                    }
-                }
+            repositories.maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/kelvSYC/gradle-build-conventions")
+                // From the GitHubPackagesUsername/GitHubPackagesPassword Gradle properties, resolved when a
+                // publish task runs; explicit credentials would disable the configuration cache.
+                credentials(PasswordCredentials::class)
             }
         }
     }

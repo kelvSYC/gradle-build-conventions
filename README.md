@@ -32,6 +32,8 @@ plugins {
 }
 ```
 
+The convention publishes to the GitHub Packages repository named by the `origin` git remote. Its credentials are the `GitHubPackagesUsername` and `GitHubPackagesPassword` Gradle properties, for example from the environment as `ORG_GRADLE_PROJECT_GitHubPackagesUsername` and `ORG_GRADLE_PROJECT_GitHubPackagesPassword` (in GitHub Actions, the actor and a token with `write:packages`). They are separate from the resolution credentials above (`gpr.user`/`gpr.key`, else `GITHUB_ACTOR`/`GITHUB_TOKEN`), which the settings plugin uses unchanged. Gradle resolves the publishing credentials only for builds that publish to GitHub Packages, and keeps them out of the configuration cache; a publishing build without them fails before running any task, naming both properties. Without a GitHub `origin`, publishing fails because of the missing remote instead.
+
 `check` runs `verifyPomDependencyVersions`, which fails if the generated POM of any Maven publication has a dependency without a version (the internal platform is stripped from the POMs, so versions that only it supplied would otherwise reach consumers unresolvable). It reads the POMs rather than the Gradle module metadata because generating module metadata builds every publication artifact, including documentation jars, which would put them in every `check`. The module metadata check (`RequireDependencyVersions`) still runs whenever module metadata is generated, so `publish` is guarded too.
 
 The settings plugin also registers the shared catalog as `libs`, with the platform BOM at the same version added as `libs.conventions.platform`. The platform is not applied to any configuration: builds that want it declare it themselves (the shared Kotlin convention plugins do this for them):

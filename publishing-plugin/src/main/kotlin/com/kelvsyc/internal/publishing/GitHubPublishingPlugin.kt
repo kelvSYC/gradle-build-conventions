@@ -8,6 +8,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.credentials.PasswordCredentials
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
@@ -34,8 +35,15 @@ import java.io.File
  * artifact. [RequireDependencyVersions] does the same for module metadata, which is generated
  * (and built, since it lists every artifact) only when publishing.
  *
- * GitHub Packages credentials come from the `gpr.user`/`gpr.key` Gradle properties, falling back
- * to the `GITHUB_ACTOR`/`GITHUB_TOKEN` environment variables.
+ * Publishing credentials come from the `GitHubPackagesUsername` and `GitHubPackagesPassword`
+ * Gradle properties, for instance set as the `ORG_GRADLE_PROJECT_GitHubPackagesUsername` and
+ * `ORG_GRADLE_PROJECT_GitHubPackagesPassword` environment variables. They are not the resolution
+ * credentials of the settings plugin (`gpr.user`/`gpr.key`, else `GITHUB_ACTOR`/`GITHUB_TOKEN`).
+ *
+ * Gradle resolves these credentials when the task graph contains a publish task to `GitHubPackages`
+ * and fails, naming both properties, if either is missing; they are kept out of the configuration
+ * cache, which explicitly set credentials would disable. Without a GitHub `origin` the repository
+ * declares no credentials, so the missing `origin` is reported instead.
  */
 class GitHubPublishingPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -46,20 +54,14 @@ class GitHubPublishingPlugin : Plugin<Project> {
             parameters.directory.set(rootDir.absolutePath)
         }.orNull?.let(::parseGitHubRemote)
 
-        val user = project.providers.gradleProperty("gpr.user")
-            .orElse(project.providers.environmentVariable("GITHUB_ACTOR"))
-        val key = project.providers.gradleProperty("gpr.key")
-            .orElse(project.providers.environmentVariable("GITHUB_TOKEN"))
-
         project.extensions.configure(PublishingExtension::class.java) {
             repositories.maven {
                 name = REPOSITORY_NAME
                 if (repository != null) {
                     setUrl("https://maven.pkg.github.com/${repository.owner}/${repository.name}")
-                }
-                credentials {
-                    username = user.orNull
-                    password = key.orNull
+                    // Resolved from the GitHubPackagesUsername/GitHubPackagesPassword Gradle properties
+                    // when a publish task runs; explicit credentials would disable the configuration cache.
+                    credentials(PasswordCredentials::class.java)
                 }
             }
 
@@ -83,7 +85,7 @@ class GitHubPublishingPlugin : Plugin<Project> {
 
         if (repository == null) {
             // A separate task rather than a doFirst action: it must fail before the publish task's
-            // own input validation, which would otherwise report missing credentials instead.
+            // own input validation, which would otherwise report the missing URL instead.
             val requireOrigin = project.tasks.register("requireGitHubOrigin") {
                 description = "Fails because the git remote 'origin' does not name a GitHub repository."
                 doLast(FailWithoutGitHubOrigin())
