@@ -7,7 +7,8 @@ class ExemptionsTest {
     @Test
     fun trailingMarkerExemptsItsLine() {
         val (exemptions, invalid) = scanExemptions("A.kt", "a\nval x = y!! // coverage-exempt: unreachable\n")
-        assertEquals(listOf(Exemption("A.kt", 2, "unreachable", false, MarkerTarget.Property(2, "x"))), exemptions)
+        val expected = Exemption("A.kt", 2, "unreachable", false, MarkerTarget.Property(2, "x", "AKt"))
+        assertEquals(listOf(expected), exemptions)
         assertEquals(emptyList<Any>(), invalid)
     }
 
@@ -27,9 +28,9 @@ class ExemptionsTest {
     private fun target(text: String): MarkerTarget = scanExemptions("A.kt", text).first.single().target
 
     @Test
-    fun markerAboveLocalValTargetsTheProperty() {
+    fun markerAboveLocalValTargetsItsLine() {
         val text = "fun f(y: Int?): Int {\n    // coverage-exempt: r\n    val x = y ?: error(\"no\")\n    return x\n}\n"
-        assertEquals(MarkerTarget.Property(3, "x"), target(text))
+        assertEquals(MarkerTarget.Line(3), target(text))
     }
 
     @Test
@@ -46,7 +47,7 @@ class ExemptionsTest {
     @Test
     fun markerAboveFunctionSkipsBlankLinesAndComments() {
         val text = "// coverage-exempt: r\n\n/**\n * Doc.\n */\n// note\npublic suspend fun <T> f() = 1\n"
-        assertEquals(MarkerTarget.Function(7, "f"), target(text))
+        assertEquals(MarkerTarget.Function(7, "f", "AKt"), target(text))
     }
 
     @Test

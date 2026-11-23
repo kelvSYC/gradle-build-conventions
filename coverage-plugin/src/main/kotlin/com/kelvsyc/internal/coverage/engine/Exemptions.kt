@@ -8,17 +8,24 @@ sealed interface MarkerTarget {
     data class Line(val line: Int) : MarkerTarget
 
     /**
-     * The function [name] declared on [line]: its methods (matched by name, ignoring mangling suffixes after `$` or
-     * `-`) whose code starts from [line] and before [until], the next declaration of a function of that name, and the
-     * code inside them. A constructor's name is `<init>`.
+     * The function [name] declared on [line] in the class [owner] (its internal name after the package, such as
+     * `Outer$Inner`, or the file facade such as `FooKt`): the owner's methods named [name] (ignoring mangling suffixes
+     * after `$` or `-`) whose code starts from [line] and before [until], the next declaration of a function of that
+     * name, and the classes generated inside the function (`Owner$name$1`).
      */
-    data class Function(val line: Int, val name: String, val until: Int = Int.MAX_VALUE) : MarkerTarget
+    data class Function(val line: Int, val name: String, val owner: String, val until: Int = Int.MAX_VALUE) :
+        MarkerTarget
+
+    /** The secondary constructor of class [owner] declared over [lines]: the owner's constructors that run them. */
+    data class Constructor(val lines: IntRange, val owner: String) : MarkerTarget
 
     /**
-     * The property [name] declared on [line]: that line, and its accessors and delegate code starting from [line] and
-     * before [until], the next declaration of a property of that name.
+     * The property [name] declared on [line] in the class [owner] (as for [Function]): that line, and the owner's
+     * accessors and delegate code for it starting from [line] and before [until], the next declaration of a property
+     * of that name.
      */
-    data class Property(val line: Int, val name: String, val until: Int = Int.MAX_VALUE) : MarkerTarget
+    data class Property(val line: Int, val name: String, val owner: String, val until: Int = Int.MAX_VALUE) :
+        MarkerTarget
 
     /**
      * The class, interface or object declared on [line], with its members and nested classes. [path] is its name
@@ -36,8 +43,9 @@ sealed interface MarkerTarget {
  *
  * [target] is what the marker exempts: for a standalone marker, what the next line of code starts (skipping blank
  * lines, comments and annotations), for a trailing marker, what its own line starts. A class, interface or object, a
- * function or constructor, a property or an `init` block is exempted as a whole; any other line, including a local
- * `val` or `var` (which has no accessors), only that line.
+ * function or constructor, a property or an `init` block is exempted as a whole, matched within the class or file
+ * facade that declares it; any other line, including a local `val`, `var` or `fun` declared inside a function, only
+ * that line.
  */
 data class Exemption(
     val file: String,
@@ -67,7 +75,7 @@ private val FUNCTION_NAME = Regex("""^\s*(?:<[^>]*>\s*)?$RECEIVER`?([A-Za-z_]\w*
 private val PROPERTY_NAME = Regex("""^\s*(?:<[^>]*>\s*)?$RECEIVER`?([A-Za-z_]\w*)`?""")
 private val CLASS_NAME = Regex("""^\s*`?([A-Za-z_]\w*)`?""")
 private val CLASS_KEYWORDS = setOf("class", "interface", "object", "fun interface")
-private val FUNCTION_KEYWORDS = setOf("fun", "constructor")
+private val FUNCTION_KEYWORDS = setOf("fun")
 private val PROPERTY_KEYWORDS = setOf("val", "var")
 private const val COMPANION_NAME = "Companion"
 private const val CONSTRUCTOR_NAME = "<init>"
@@ -93,6 +101,7 @@ private fun declarationStart(code: String): DeclarationStart? {
 /** Scans [text] of [file] for exemption markers, returning the valid ones and the reasonless ones. */
 fun scanExemptions(file: String, text: String): Pair<List<Exemption>, List<InvalidMarker>> {
     val lines = text.lines()
+    val source = Source(lines, facadeName(file, text))
     val exemptions = mutableListOf<Exemption>()
     val invalid = mutableListOf<InvalidMarker>()
     lines.forEachIndexed { index, line ->
@@ -102,7 +111,7 @@ fun scanExemptions(file: String, text: String): Pair<List<Exemption>, List<Inval
             val code = line.substring(0, valid.range.first)
             val standalone = code.isBlank()
             val reason = valid.groupValues[1].trim()
-            val target = if (standalone) standaloneTarget(lines, index) else targetOf(lines, index, code)
+            val target = if (standalone) standaloneTarget(source, index) else targetOf(source, index, code)
             exemptions.add(Exemption(file, number, reason, standalone, target))
         } else if (EMPTY_MARKER.containsMatchIn(line)) {
             invalid.add(InvalidMarker(file, number))
@@ -154,8 +163,21 @@ private fun skipParentheses(code: String, start: Int, depth: Int): Pair<Int, Int
     return code.length to open
 }
 
-/** The target of a standalone marker at [markerIndex] (0-based) of [lines]. */
-private fun standaloneTarget(lines: List<String>, markerIndex: Int): MarkerTarget {
+/** A scanned file: its [lines] and the [facade] class its top-level functions and properties compile into. */
+private class Source(val lines: List<String>, val facade: String)
+
+private val JVM_NAME = Regex("""^\s*@file:JvmName\(\s*"([^"]+)"\s*\)""", RegexOption.MULTILINE)
+
+/** The file facade class of [file]: its `@file:JvmName`, else the file name, capitalised, with `Kt`. */
+private fun facadeName(file: String, text: String): String {
+    JVM_NAME.find(text)?.let { return it.groupValues[1] }
+    val base = file.substringAfterLast('/').substringBeforeLast('.').replace(Regex("""[^A-Za-z0-9_]"""), "_")
+    return base.replaceFirstChar { it.uppercaseChar() } + "Kt"
+}
+
+/** The target of a standalone marker at [markerIndex] (0-based) of the [source]'s lines. */
+private fun standaloneTarget(source: Source, markerIndex: Int): MarkerTarget {
+    val lines = source.lines
     var index = markerIndex + 1
     var inBlockComment = false
     var openParentheses = 0
@@ -169,7 +191,7 @@ private fun standaloneTarget(lines: List<String>, markerIndex: Int): MarkerTarge
             if (depth == 0) {
                 val (rest, open) = stripAnnotations(line.substring(end))
                 openParentheses = open
-                if (rest.isNotBlank()) return targetOf(lines, index, rest)
+                if (rest.isNotBlank()) return targetOf(source, index, rest)
             }
         } else {
             when {
@@ -179,7 +201,7 @@ private fun standaloneTarget(lines: List<String>, markerIndex: Int): MarkerTarge
                 else -> {
                     val (rest, open) = stripAnnotations(line)
                     openParentheses = open
-                    if (rest.isNotBlank()) return targetOf(lines, index, rest)
+                    if (rest.isNotBlank()) return targetOf(source, index, rest)
                 }
             }
         }
@@ -188,19 +210,29 @@ private fun standaloneTarget(lines: List<String>, markerIndex: Int): MarkerTarge
     return MarkerTarget.Line(markerIndex + 1)
 }
 
-/** What the [code] of line [index] (0-based) of [lines] starts. */
-private fun targetOf(lines: List<String>, index: Int, code: String): MarkerTarget {
+/** What the [code] of line [index] (0-based) of the [source]'s lines starts. */
+private fun targetOf(source: Source, index: Int, code: String): MarkerTarget {
+    val lines = source.lines
     val number = index + 1
     val start = declarationStart(code) ?: return MarkerTarget.Line(number)
     val name = start.name
+    val scope = enclosingClasses(lines, index)
+    // A declaration inside a function is local: its code compiles into the function's class under other names.
+    if (scope.local && start.keyword !in CLASS_KEYWORDS) return MarkerTarget.Line(number)
+    val owner = scope.path.joinToString("$").ifEmpty { source.facade }
     return when {
         start.keyword == "init" -> MarkerTarget.Block(number..blockEnd(lines, index))
         name == null -> MarkerTarget.Line(number)
-        start.keyword in CLASS_KEYWORDS -> classTarget(lines, index, name)
-        start.keyword in FUNCTION_KEYWORDS ->
-            MarkerTarget.Function(number, name, nextDeclaration(lines, index, FUNCTION_KEYWORDS, name))
+        start.keyword in CLASS_KEYWORDS ->
+            MarkerTarget.Class(number, (scope.path + name).joinToString("$"), scope.local)
+        start.keyword == "constructor" -> {
+            val end = if ('{' in code) blockEnd(lines, index) else number
+            MarkerTarget.Constructor(number..end, owner)
+        }
+        start.keyword == "fun" ->
+            MarkerTarget.Function(number, name, owner, nextDeclaration(lines, index, FUNCTION_KEYWORDS, name))
         start.keyword in PROPERTY_KEYWORDS ->
-            MarkerTarget.Property(number, name, nextDeclaration(lines, index, PROPERTY_KEYWORDS, name))
+            MarkerTarget.Property(number, name, owner, nextDeclaration(lines, index, PROPERTY_KEYWORDS, name))
         else -> MarkerTarget.Line(number)
     }
 }
@@ -217,13 +249,15 @@ private fun nextDeclaration(lines: List<String>, index: Int, keywords: Set<Strin
 private fun indentOf(line: String): Int =
     line.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) line.length else it }
 
+/** The classes enclosing a declaration, outermost first; [local] when a function encloses it. */
+private class Scope(val path: List<String>, val local: Boolean)
+
 /**
- * The class declared on line [index] (0-based) named [name], nested in the classes that enclose it: each enclosing
- * declaration is the nearest preceding declaration indented less than the one inside it. A class enclosed by a
- * function is local, and matched by its simple name only.
+ * The classes enclosing line [index] (0-based): each enclosing declaration is the nearest preceding declaration
+ * indented less than the one inside it.
  */
-private fun classTarget(lines: List<String>, index: Int, name: String): MarkerTarget.Class {
-    val path = mutableListOf(name)
+private fun enclosingClasses(lines: List<String>, index: Int): Scope {
+    val path = mutableListOf<String>()
     var local = false
     var indent = indentOf(lines[index])
     var current = index
@@ -240,7 +274,7 @@ private fun classTarget(lines: List<String>, index: Int, name: String): MarkerTa
         indent = indentOf(lines[parent])
         current = parent
     }
-    return MarkerTarget.Class(index + 1, path.joinToString("$"), local)
+    return Scope(path, local)
 }
 
 /**

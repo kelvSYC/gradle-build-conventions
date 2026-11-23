@@ -267,4 +267,86 @@ class MarkerTargetingTest {
         val declarations = arrayOf(d("P\$Inner", "a", 8..8), d("Q\$Inner", "b", 13..13))
         assertEquals(listOf("Q\$Inner.b"), uncovered(body, *declarations))
     }
+
+    // Owning class scope ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun constructorMarkerDoesNotReachLaterClasses() {
+        val body = """
+            class A(val x: Int) {
+                // coverage-exempt: legacy entry point
+                constructor() : this(0)
+                fun a() = x
+            }
+            class B {
+                fun b() = 2
+            }
+            object C {
+                fun c() = 3
+            }
+        """
+        val declarations = arrayOf(
+            d("A", "<init>", 3..3), d("A", "getX", 3..3), d("A", "<init>", 5..5), d("A", "a", 6..6),
+            d("B", "<init>", 8..8), d("B", "b", 9..9), d("C", "<init>", 11..11, publicApi = false), d("C", "c", 12..12),
+        )
+        assertEquals(
+            listOf("A.<init>", "A.getX", "A.a", "B.<init>", "B.b", "C.c"),
+            uncovered(body, *declarations),
+        )
+    }
+
+    @Test
+    fun topLevelPropertyMarkerDoesNotReachAConstructorProperty() {
+        val body = """
+            // coverage-exempt: platform
+            val name: String = System.getenv("X")
+            data class Person(val name: String)
+        """
+        val declarations = arrayOf(d("AKt", "getName", 4..4), d("Person", "<init>", 5..5), d("Person", "getName", 5..5))
+        assertEquals(listOf("Person.<init>", "Person.getName"), uncovered(body, *declarations))
+    }
+
+    @Test
+    fun localValMarkerExemptsNoAccessor() {
+        val body = """
+            fun f(): Int {
+                // coverage-exempt: unreachable
+                val name = compute()
+                return name.length
+            }
+            class D(val name: String)
+        """
+        val declarations = arrayOf(d("AKt", "f", 5..6), d("D", "<init>", 8..8), d("D", "getName", 8..8))
+        assertEquals(listOf("AKt.f", "D.<init>", "D.getName"), uncovered(body, *declarations))
+    }
+
+    @Test
+    fun functionMarkerDoesNotReachAOneLineObject() {
+        val body = """
+            class A {
+                // coverage-exempt: glue
+                fun foo() = 1
+            }
+            object X { fun foo() = 2 }
+        """
+        val declarations = arrayOf(
+            d("A", "<init>", 3..3), d("A", "foo", 5..5), d("X", "<init>", 7..7, publicApi = false), d("X", "foo", 7..7),
+        )
+        assertEquals(listOf("A.<init>", "X.foo"), uncovered(body, *declarations))
+    }
+
+    @Test
+    fun functionMarkerDoesNotReachTheSameNameInAnotherClass() {
+        val body = """
+            class A {
+                // coverage-exempt: glue
+                fun foo() = 1
+            }
+            class B {
+                fun foo() = 2
+            }
+        """
+        val declarations = arrayOf(d("A", "foo", 5..5), d("B", "foo", 8..8))
+        assertEquals(listOf("B.foo"), uncovered(body, *declarations))
+    }
 }

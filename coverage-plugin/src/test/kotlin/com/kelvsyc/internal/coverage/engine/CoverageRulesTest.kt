@@ -126,7 +126,7 @@ class CoverageRulesTest {
 
     @Test
     fun standaloneExemptionExemptsNextDeclaration() {
-        val exemption = Exemption(repoFile, 9, "platform stub", true, MarkerTarget.Function(10, "f"))
+        val exemption = Exemption(repoFile, 9, "platform stub", true, MarkerTarget.Function(10, "f", "Foo"))
         val result = eval(changed(10), report(false), listOf(decl()), exemptions = listOf(exemption))
         assertTrue(result.passed)
         assertEquals(listOf(exemption), result.exemptions)
@@ -135,7 +135,7 @@ class CoverageRulesTest {
 
     @Test
     fun standaloneExemptionOnlyReachesTheNextDeclaration() {
-        val exemption = Exemption(repoFile, 9, "stub", true, MarkerTarget.Function(10, "f"))
+        val exemption = Exemption(repoFile, 9, "stub", true, MarkerTarget.Function(10, "f", "Foo"))
         val other = decl(name = "g", lines = 20..22)
         val result = eval(
             changed(10, 20),
@@ -148,7 +148,7 @@ class CoverageRulesTest {
 
     @Test
     fun exemptionOnUntouchedCodeIsNotListed() {
-        val exemption = Exemption(repoFile, 9, "stub", true, MarkerTarget.Function(10, "f"))
+        val exemption = Exemption(repoFile, 9, "stub", true, MarkerTarget.Function(10, "f", "Foo"))
         val result = eval(changed(99), report(false), listOf(decl()), exemptions = listOf(exemption))
         assertEquals(emptyList<Exemption>(), result.exemptions)
     }
@@ -220,7 +220,7 @@ class CoverageRulesTest {
 
     @Test
     fun trailingExemptionOnFirstLineExemptsTheDeclaration() {
-        val exemption = Exemption(repoFile, 10, "stub", false, MarkerTarget.Function(10, "f"))
+        val exemption = Exemption(repoFile, 10, "stub", false, MarkerTarget.Function(10, "f", "Foo"))
         assertTrue(eval(changed(10), report(false), listOf(decl()), exemptions = listOf(exemption)).passed)
     }
 
@@ -300,7 +300,7 @@ class CoverageRulesTest {
     @Test
     fun functionTargetExemptsTheFunctionAndItsLambdas() {
         val lambda = decl(name = "f\$lambda\$0", lines = 12..13, publicApi = false, className = "com/a/Foo")
-        val exemption = Exemption(repoFile, 8, "glue", true, MarkerTarget.Function(9, "f"))
+        val exemption = Exemption(repoFile, 8, "glue", true, MarkerTarget.Function(9, "f", "Foo"))
         val result = eval(
             changed(10, 13),
             report(false, lines = mapOf(13 to branchLine(0, 4))),
