@@ -1,5 +1,6 @@
 package com.kelvsyc.internal.publishing
 
+import com.sun.net.httpserver.HttpServer
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.transport.URIish
 import org.gradle.testkit.runner.BuildResult
@@ -9,6 +10,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.util.Base64
+import java.util.Collections
 
 class GitHubPublishingPluginTest {
 
@@ -83,9 +88,18 @@ class GitHubPublishingPluginTest {
         }
     }
 
+    /**
+     * The environment of the test builds: this process's, without any GitHub Packages credentials, so
+     * that only the credentials a test passes reach the build.
+     */
+    private var environment: Map<String, String> = System.getenv().filterKeys { name ->
+        name !in setOf("GITHUB_ACTOR", "GITHUB_TOKEN") && !name.startsWith("ORG_GRADLE_PROJECT_")
+    }
+
     private fun runner(vararg args: String): GradleRunner = GradleRunner.create()
         .withProjectDir(dir)
         .withArguments(*args, "--configuration-cache", "--stacktrace")
+        .withEnvironment(environment)
         .forwardOutput()
 
     private fun build(vararg args: String): BuildResult = runner(*args).build()
@@ -340,5 +354,106 @@ class GitHubPublishingPluginTest {
 
         val result = buildAndFail("publishMavenPublicationToGitHubPackagesRepository")
         assertTrue(result.output.contains("'origin'"), result.output)
+    }
+
+    @Test
+    fun noRemoteFailsBeforeCredentials() {
+        consumer()
+        // Without credentials either, the missing origin is still what is reported.
+        val result = buildAndFail("publish")
+        assertTrue(result.output.contains("'origin'"), result.output)
+        assertFalse(result.output.contains("GitHubPackagesUsername"), result.output)
+    }
+
+    /**
+     * A Maven repository over HTTP accepting every upload, which challenges requests without basic
+     * credentials and records the credentials of the uploads.
+     */
+    private class StubRepository : AutoCloseable {
+        val uploads: MutableList<Pair<String, String>> = Collections.synchronizedList(mutableListOf())
+        private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
+            createContext("/") { exchange ->
+                exchange.requestBody.readAllBytes()
+                val authorization = exchange.requestHeaders.getFirst("Authorization")
+                val status = when {
+                    authorization == null -> {
+                        exchange.responseHeaders.add("WWW-Authenticate", "Basic realm=\"stub\"")
+                        HTTP_UNAUTHORIZED
+                    }
+                    exchange.requestMethod == "PUT" -> {
+                        val credentials = String(Base64.getDecoder().decode(authorization.removePrefix("Basic ")))
+                        uploads += exchange.requestURI.path to credentials
+                        HTTP_OK
+                    }
+                    else -> HTTP_NOT_FOUND
+                }
+                exchange.sendResponseHeaders(status, -1)
+                exchange.close()
+            }
+            start()
+        }
+
+        val url: String = "http://127.0.0.1:${server.address.port}/"
+
+        override fun close() = server.stop(0)
+
+        private companion object {
+            const val HTTP_OK = 200
+            const val HTTP_UNAUTHORIZED = 401
+            const val HTTP_NOT_FOUND = 404
+        }
+    }
+
+    /** Points the `GitHubPackages` repository at [url], keeping everything else the plugin configured. */
+    private fun redirectGitHubPackages(url: String) = """
+        |(publishing.repositories["GitHubPackages"] as MavenArtifactRepository).apply {
+        |    setUrl("$url")
+        |    isAllowInsecureProtocol = true
+        |}
+    """.trimMargin()
+
+    @Test
+    fun publishIsConfigurationCacheCompatible() {
+        StubRepository().use { stub ->
+            consumer(buildBody = redirectGitHubPackages(stub.url), origin = "https://github.com/kelvSYC/rifflet.git")
+            val credentials = arrayOf("-PGitHubPackagesUsername=alice", "-PGitHubPackagesPassword=secret")
+
+            val first = build("publish", *credentials)
+            assertTrue(first.output.contains("Configuration cache entry stored"), first.output)
+            assertFalse(first.output.contains("incompatible", ignoreCase = true), first.output)
+            assertTrue(stub.uploads.any { (path, _) -> path.endsWith("/consumer-1.0.jar") }, stub.uploads.toString())
+
+            stub.uploads.clear()
+            val second = build("publish", *credentials)
+            assertConfigurationCacheReused(second)
+            assertTrue(stub.uploads.any { (path, _) -> path.endsWith("/consumer-1.0.pom") }, stub.uploads.toString())
+        }
+    }
+
+    @Test
+    fun credentialsFromGitHubPackagesProperties() {
+        StubRepository().use { stub ->
+            consumer(buildBody = redirectGitHubPackages(stub.url), origin = "https://github.com/kelvSYC/rifflet.git")
+            environment = environment + mapOf(
+                "ORG_GRADLE_PROJECT_GitHubPackagesUsername" to "alice",
+                "ORG_GRADLE_PROJECT_GitHubPackagesPassword" to "secret",
+            )
+            build("publish")
+            assertTrue(stub.uploads.isNotEmpty(), "no uploads")
+            assertTrue(stub.uploads.all { (_, credentials) -> credentials == "alice:secret" }, stub.uploads.toString())
+        }
+    }
+
+    @Test
+    fun missingCredentialsNameTheProperties() {
+        StubRepository().use { stub ->
+            consumer(buildBody = redirectGitHubPackages(stub.url), origin = "https://github.com/kelvSYC/rifflet.git")
+            // The resolution credentials are not used for publishing.
+            environment = environment + mapOf("GITHUB_ACTOR" to "alice", "GITHUB_TOKEN" to "secret")
+            val result = buildAndFail("publish", "-Pgpr.user=alice", "-Pgpr.key=secret")
+            assertTrue(result.output.contains("GitHubPackagesUsername"), result.output)
+            assertTrue(result.output.contains("GitHubPackagesPassword"), result.output)
+            assertTrue(stub.uploads.isEmpty(), stub.uploads.toString())
+        }
     }
 }
