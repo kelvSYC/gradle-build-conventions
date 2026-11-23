@@ -31,7 +31,6 @@ data class CoverageResult(
     val uncoveredLines: List<String>,
     val branchesCovered: Int,
     val branchesTotal: Int,
-    val branchFloorMet: Boolean,
     val linesCovered: Int,
     val linesTotal: Int,
     val notMeasurable: List<String>,
@@ -40,7 +39,13 @@ data class CoverageResult(
     val filesWithoutCoverageData: List<String>,
     val noExecutionData: Boolean,
     val changedMeasuredLines: Int,
+    val settings: RuleSettings,
 ) {
+    /** True when the changed lines hold fewer than the minimum branches, or enough of them are covered. */
+    val branchFloorMet: Boolean
+        get() = branchesTotal < settings.minimumBranches ||
+            branchesCovered.toDouble() / branchesTotal >= settings.branchFloor
+
     /**
      * True when every changed line is covered, the branch floor is met, no marker is invalid and every changed file
      * that compiles to classes has coverage data.
@@ -66,16 +71,15 @@ private fun SourceRoots.locate(path: String): Pair<String, Boolean>? {
  * on changed lines meet the floor, and no marker on a changed line lacks a reason. Exempted lines are not judged; lines
  * of inline bodies and of sources under non-JVM roots are reported as not measurable.
  *
- * [exemptionsByFile] and [packagesByFile] hold the markers ([scanExemptions]) and declared package ([packageName]) of
- * changed files, by repository path. A file is matched to the report by its package and file name, so a file whose
- * directory does not mirror its package still matches its classes; without a known package, by its path below its root.
+ * [scansByFile] holds the markers and declared package of changed files ([scanExemptions]), by repository path. A file
+ * is matched to the report by its package and file name, so a file whose directory does not mirror its package still
+ * matches its classes; without a known package, by its path below its root.
  */
 fun evaluate(
     changed: ChangedLines,
     report: JacocoXmlReport,
     compiled: CompiledFacts,
-    exemptionsByFile: Map<String, ExemptionScan>,
-    packagesByFile: Map<String, String>,
+    scansByFile: Map<String, ExemptionScan>,
     roots: SourceRoots,
     settings: RuleSettings,
 ): CoverageResult {
@@ -91,7 +95,7 @@ fun evaluate(
     var linesTotal = 0
     for ((path, lines) in changed.byFile.toSortedMap()) {
         val (root, measured) = roots.locate(path) ?: continue
-        val scan = exemptionsByFile[path]
+        val scan = scansByFile[path]
         scan?.invalid?.filterTo(invalid) { it.line in lines }
         if (!measured) {
             lineRanges(lines).mapTo(notMeasurable) { "$path:$it" }
@@ -100,7 +104,7 @@ fun evaluate(
         changedMeasuredLines += lines.size
         scan?.exemptions?.filterTo(exemptions) { it.target in lines }
         val fileName = path.substringAfterLast('/')
-        val key = when (val pkg = packagesByFile[path]) {
+        val key = when (val pkg = scan?.packageName) {
             null -> path.removePrefix("$root/")
             "" -> fileName
             else -> pkg.replace('.', '/') + "/" + fileName
@@ -122,11 +126,9 @@ fun evaluate(
             branchesTotal += coverage.coveredBranches + coverage.missedBranches
         }
     }
-    val floorMet = branchesTotal < settings.minimumBranches ||
-        branchesCovered.toDouble() / branchesTotal >= settings.branchFloor
     return CoverageResult(
-        uncovered, branchesCovered, branchesTotal, floorMet, linesCovered, linesTotal, notMeasurable, exemptions,
-        invalid, withoutData, report.lines.isEmpty(), changedMeasuredLines,
+        uncovered, branchesCovered, branchesTotal, linesCovered, linesTotal, notMeasurable, exemptions, invalid,
+        withoutData, report.lines.isEmpty(), changedMeasuredLines, settings,
     )
 }
 

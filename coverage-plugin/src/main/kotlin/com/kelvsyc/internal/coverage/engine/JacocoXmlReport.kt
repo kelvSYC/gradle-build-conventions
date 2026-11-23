@@ -3,7 +3,6 @@ package com.kelvsyc.internal.coverage.engine
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
-import org.w3c.dom.Node
 
 /** Instruction and branch counts for one source line. */
 data class LineCoverage(
@@ -33,11 +32,12 @@ class JacocoXmlReport(val lines: Map<String, Map<Int, LineCoverage>>) {
             val root = factory.newDocumentBuilder().parse(xml).documentElement
 
             val lines = linkedMapOf<String, Map<Int, LineCoverage>>()
-            for (pkg in root.children("package")) {
+            for (pkg in root.descendants("package")) {
                 val pkgName = pkg.getAttribute("name")
-                for (source in pkg.children("sourcefile")) {
-                    val path = if (pkgName.isEmpty()) source.getAttribute("name") else "$pkgName/${source.getAttribute("name")}"
-                    lines[path] = source.children("line").associate {
+                for (source in pkg.descendants("sourcefile")) {
+                    val name = source.getAttribute("name")
+                    val path = if (pkgName.isEmpty()) name else "$pkgName/$name"
+                    lines[path] = source.descendants("line").associate {
                         it.getAttribute("nr").toInt() to LineCoverage(
                             it.getAttribute("mi").toInt(),
                             it.getAttribute("ci").toInt(),
@@ -50,14 +50,8 @@ class JacocoXmlReport(val lines: Map<String, Map<Int, LineCoverage>>) {
             return JacocoXmlReport(lines)
         }
 
-        private fun Element.children(tag: String): List<Element> {
-            val result = mutableListOf<Element>()
-            var node: Node? = firstChild
-            while (node != null) {
-                if (node is Element && node.tagName == tag) result.add(node)
-                node = node.nextSibling
-            }
-            return result
-        }
+        /** The descendant elements named [tag]. */
+        private fun Element.descendants(tag: String): List<Element> =
+            getElementsByTagName(tag).let { nodes -> (0 until nodes.length).map { nodes.item(it) as Element } }
     }
 }

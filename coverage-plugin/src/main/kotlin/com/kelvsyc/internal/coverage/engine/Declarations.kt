@@ -20,7 +20,8 @@ import org.objectweb.asm.Opcodes
  * What the compiled classes tell about their sources, keyed as in [JacocoXmlReport.lines].
  *
  * [inlineLines] are the lines of `inline` functions and property accessors, which JaCoCo attributes to their callers,
- * so their own lines never report as executed. [compiledSourceFiles] are the source files with code in some class.
+ * so their own lines never report as executed, and of the lambdas and anonymous objects inside them, which the compiler
+ * regenerates at each call site. [compiledSourceFiles] are the source files with code in some class.
  */
 data class CompiledFacts(val inlineLines: Map<String, Set<Int>>, val compiledSourceFiles: Set<String>)
 
@@ -47,28 +48,32 @@ fun scanCompiled(classDirs: List<File>): CompiledFacts {
     val classFiles = classDirs.flatMap { dir ->
         dir.walkTopDown().filter { it.isFile && it.extension == "class" && it.name != "module-info.class" }.toList()
     }
-    for (cls in classFiles.map { readClass(it) }) {
+    val classes = classFiles.map { readClass(it) }.filter { it.methods.isNotEmpty() }
+    val inline = classes.associate { it.name to inlineSignatures(it.metadata) }
+    // Classes generated inside an inline function are named after it: `Owner$function$1`.
+    val regeneratedPrefixes = inline.flatMap { (owner, signatures) -> signatures.map { "$owner\$${it.name}\$" } }
+    for (cls in classes) {
         val sourceFile = cls.sourceFile ?: continue
-        if (cls.methods.isEmpty()) continue
         val key = if ('/' in cls.name) cls.name.substringBeforeLast('/') + "/" + sourceFile else sourceFile
         compiledSourceFiles.add(key)
-        val inline = inlineSignatures(cls.metadata)
-        for (method in cls.methods.filter { it.signature in inline }) {
+        val regenerated = regeneratedPrefixes.any { cls.name.startsWith(it) }
+        val signatures = inline.getValue(cls.name).map { it.name + it.descriptor }
+        for (method in cls.methods.filter { regenerated || it.signature in signatures }) {
             inlineLines.getOrPut(key) { mutableSetOf() }.addAll(method.lines)
         }
     }
     return CompiledFacts(inlineLines, compiledSourceFiles)
 }
 
-/** The signatures (name and descriptor) of the `inline` functions and property accessors [metadata] declares. */
-private fun inlineSignatures(metadata: Metadata?): Set<String> {
+/** The signatures of the `inline` functions and property accessors [metadata] declares. */
+private fun inlineSignatures(metadata: Metadata?): List<JvmMethodSignature> {
     val (functions, properties) = when (val parsed = metadata?.let { KotlinClassMetadata.readLenient(it) }) {
         is KotlinClassMetadata.Class -> parsed.kmClass.functions to parsed.kmClass.properties
         is KotlinClassMetadata.FileFacade -> parsed.kmPackage.functions to parsed.kmPackage.properties
         is KotlinClassMetadata.MultiFileClassPart -> parsed.kmPackage.functions to parsed.kmPackage.properties
-        else -> return emptySet()
+        else -> return emptyList()
     }
-    return inlineSignatures(functions, properties).map { it.name + it.descriptor }.toSet()
+    return inlineSignatures(functions, properties)
 }
 
 private fun inlineSignatures(functions: List<KmFunction>, properties: List<KmProperty>): List<JvmMethodSignature> =

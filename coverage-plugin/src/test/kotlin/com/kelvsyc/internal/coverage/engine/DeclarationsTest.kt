@@ -17,8 +17,9 @@ class DeclarationsTest {
 
     @Test
     fun inlineLinesAreTheInlineBodiesOwnLines() {
-        // The bodies of twice, sum (without the lines SMAP maps forEach to) and the doubled getter.
-        assertEquals(setOf(4, 5, 6, 9, 10, 11, 24), compiled.inlineLines[key])
+        // The bodies of twice, sum (without the lines SMAP maps forEach to), the doubled getter, and deferred with the
+        // lambda it returns, which compiles to its own class.
+        assertEquals(setOf(4, 5, 6, 9, 10, 11, 24, 27, 28, 29), compiled.inlineLines[key])
     }
 
     @Test
@@ -30,8 +31,7 @@ class DeclarationsTest {
             ChangedLines(mapOf(path to setOf(4, 5, 16))),
             report,
             compiled,
-            emptyMap(),
-            mapOf(path to "fixtures"),
+            mapOf(path to ExemptionScan(emptyList(), emptyList(), "fixtures")),
             SourceRoots(listOf("src/main/kotlin"), emptyList()),
             RuleSettings(),
         )

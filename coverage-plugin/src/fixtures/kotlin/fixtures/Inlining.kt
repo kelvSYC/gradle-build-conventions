@@ -22,3 +22,10 @@ val answer: Int
 
 inline val doubled: Int
     get() = answer * 2
+
+inline fun deferred(crossinline block: () -> Int): () -> Int {
+    return {
+        val value = block()
+        value + 1
+    }
+}

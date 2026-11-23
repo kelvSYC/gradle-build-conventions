@@ -22,11 +22,16 @@ class CoverageRulesTest {
     private fun eval(
         changed: ChangedLines,
         report: JacocoXmlReport,
-        exemptions: Map<String, ExemptionScan> = emptyMap(),
-        packages: Map<String, String> = mapOf(repoFile to "com.a"),
+        scans: Map<String, ExemptionScan> = mapOf(repoFile to scan()),
         settings: RuleSettings = RuleSettings(),
         compiled: CompiledFacts = CompiledFacts(emptyMap(), setOf(key)),
-    ) = evaluate(changed, report, compiled, exemptions, packages, roots, settings)
+    ) = evaluate(changed, report, compiled, scans, roots, settings)
+
+    private fun scan(vararg invalid: InvalidMarker) = ExemptionScan(emptyList(), invalid.toList(), "com.a")
+
+    /** The scan of a file in `com.a` whose line 11 is `x()` with a trailing marker. */
+    private val markedLine11 =
+        scanExemptions(repoFile, "package com.a" + "\n".repeat(10) + "x() // coverage-exempt: unreachable\n")
 
     private fun branchLine(covered: Int, missed: Int) = LineCoverage(1, 1, missed, covered)
 
@@ -62,38 +67,36 @@ class CoverageRulesTest {
 
     @Test
     fun exemptedChangedLineIsNotJudged() {
-        val scan = scanExemptions(repoFile, "\n".repeat(10) + "x() // coverage-exempt: unreachable\n")
-        val result = eval(changed(11, 12), report(11 to branchLine(0, 4), 12 to covered), mapOf(repoFile to scan))
+        val report = report(11 to branchLine(0, 4), 12 to covered)
+        val result = eval(changed(11, 12), report, mapOf(repoFile to markedLine11))
         assertTrue(result.passed)
         assertEquals(0, result.branchesTotal)
         assertEquals(1, result.linesTotal)
-        assertEquals(scan.exemptions, result.exemptions)
+        assertEquals(markedLine11.exemptions, result.exemptions)
         assertTrue(result.render("p").contains("Exempted:\n  $repoFile:11 unreachable"))
     }
 
     @Test
     fun exemptionOfUnchangedLineIsNotListed() {
-        val scan = scanExemptions(repoFile, "\n".repeat(10) + "x() // coverage-exempt: unreachable\n")
-        assertEquals(emptyList<Exemption>(), eval(changed(12), report(12 to covered), mapOf(repoFile to scan)).exemptions)
+        val result = eval(changed(12), report(12 to covered), mapOf(repoFile to markedLine11))
+        assertEquals(emptyList<Exemption>(), result.exemptions)
     }
 
     @Test
     fun markerWithoutReasonOnChangedLineFails() {
-        val scan = ExemptionScan(emptySet(), emptyList(), listOf(InvalidMarker(repoFile, 10)))
-        val result = eval(changed(10), report(), mapOf(repoFile to scan))
+        val result = eval(changed(10), report(), mapOf(repoFile to scan(InvalidMarker(repoFile, 10))))
         assertFalse(result.passed)
         assertTrue(result.render("p").contains("Invalid markers:\n  $repoFile:10"))
     }
 
     @Test
     fun markerWithoutReasonOnUnchangedLineIsIgnored() {
-        val scan = ExemptionScan(emptySet(), emptyList(), listOf(InvalidMarker(repoFile, 99)))
-        assertTrue(eval(changed(10), report(), mapOf(repoFile to scan)).passed)
+        assertTrue(eval(changed(10), report(), mapOf(repoFile to scan(InvalidMarker(repoFile, 99)))).passed)
     }
 
     @Test
     fun markerWithoutReasonOutsideAnyRootIsIgnored() {
-        val scan = ExemptionScan(emptySet(), emptyList(), listOf(InvalidMarker("build.gradle.kts", 3)))
+        val scan = scan(InvalidMarker("build.gradle.kts", 3))
         assertTrue(eval(changed(3, file = "build.gradle.kts"), report(), mapOf("build.gradle.kts" to scan)).passed)
     }
 
@@ -159,7 +162,7 @@ class CoverageRulesTest {
     @Test
     fun fileOutsideItsPackageDirectoryIsChecked() {
         val file = "$root/Foo.kt"
-        val result = eval(changed(11, file = file), report(11 to uncovered), packages = mapOf(file to "com.a"))
+        val result = eval(changed(11, file = file), report(11 to uncovered), mapOf(file to scan()))
         assertEquals(listOf("$file:11"), result.uncoveredLines)
     }
 

@@ -21,17 +21,15 @@ class ExemptionsTest {
             |    // a comment
             |    /* a block
             |       comment */
-            |    @Suppress(
-            |        "x",
-            |    )
-            |    @Deprecated("y") // note
+            |    @Suppress("x") @file:JvmName("y")
+            |    @Deprecated("z") // note
             |    val x = y ?: error("no")
             |    return x
             |}
         """.trimMargin()
         val scan = scanExemptions("A.kt", text)
-        assertEquals(setOf(11), scan.exemptLines)
-        assertEquals(listOf(Exemption("A.kt", 2, "always set", 11)), scan.exemptions)
+        assertEquals(setOf(9), scan.exemptLines)
+        assertEquals(listOf(Exemption("A.kt", 2, "always set", 9)), scan.exemptions)
     }
 
     @Test
@@ -42,9 +40,15 @@ class ExemptionsTest {
     }
 
     @Test
+    fun markerAboveMultiLineAnnotationTargetsItsFirstLine() {
+        val scan = scanExemptions("A.kt", "// coverage-exempt: r\n@Suppress(\n    \"x\",\n)\nval x = 1\n")
+        assertEquals(setOf(2), scan.exemptLines)
+    }
+
+    @Test
     fun packageNameIsTheDeclaredPackage() {
-        assertEquals("com.a", packageName("@file:JvmName(\"X\")\npackage com.a\n"))
-        assertEquals("com.b", packageName("package com.b;\nclass J {}\n"))
-        assertEquals("", packageName("fun f() = 1\n"))
+        assertEquals("com.a", scanExemptions("A.kt", "@file:JvmName(\"X\")\npackage com.a\n").packageName)
+        assertEquals("com.b", scanExemptions("J.java", "package com.b;\nclass J {}\n").packageName)
+        assertEquals("", scanExemptions("A.kt", "fun f() = 1\n").packageName)
     }
 }

@@ -1,12 +1,10 @@
 package com.kelvsyc.internal.coverage
 
 import com.kelvsyc.internal.coverage.engine.ChangedLines
-import com.kelvsyc.internal.coverage.engine.ExemptionScan
 import com.kelvsyc.internal.coverage.engine.JacocoXmlReport
 import com.kelvsyc.internal.coverage.engine.RuleSettings
 import com.kelvsyc.internal.coverage.engine.SourceRoots
 import com.kelvsyc.internal.coverage.engine.evaluate
-import com.kelvsyc.internal.coverage.engine.packageName
 import com.kelvsyc.internal.coverage.engine.render
 import com.kelvsyc.internal.coverage.engine.scanCompiled
 import com.kelvsyc.internal.coverage.engine.scanExemptions
@@ -95,18 +93,11 @@ abstract class VerifyChangedCoverage : DefaultTask() {
         val report = if (hasExecutionData && xml.isFile) JacocoXmlReport.parse(xml) else JacocoXmlReport(emptyMap())
         val compiled = scanCompiled(classDirectories.files.filter { it.isDirectory })
 
-        val exemptions = mutableMapOf<String, ExemptionScan>()
-        val packages = mutableMapOf<String, String>()
-        for (path in changed.byFile.keys) {
-            val file = File(repoRoot, path)
-            if (!file.isFile) continue
-            val text = file.readText()
-            packages[path] = packageName(text)
-            exemptions[path] = scanExemptions(path, text)
-        }
+        val scans = changed.byFile.keys.filter { File(repoRoot, it).isFile }
+            .associateWith { scanExemptions(it, File(repoRoot, it).readText()) }
 
         val result = evaluate(
-            changed, report, compiled, exemptions, packages,
+            changed, report, compiled, scans,
             SourceRoots(changes.measured, changes.notMeasured),
             RuleSettings(branchFloor.get(), minimumBranches.get()),
         )
