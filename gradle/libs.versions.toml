@@ -4,6 +4,9 @@ dokkatoo = "2.4.0"
 # Transitively pulled in at older, vulnerable versions by org.jetbrains.dokka:dokka-core/dokka-base; pinned
 # here to the latest patched releases to close the corresponding Dependabot alerts.
 freemarker = "2.3.35"
+# Groovy and groovy-sql release together; one version per line keeps each pair of catalog entries in step.
+groovy = "6.0.0"
+groovy3 = "3.0.25"
 # The Gradle version these conventions are built and tested with; consumers' wrappers follow it. Must equal this
 # repository's wrapper version (checked by `checkToolchainVersions`).
 gradle = "9.9.2"
@@ -52,11 +55,14 @@ commons-numbers-complex = { module = "org.apache.commons:commons-numbers-complex
 commons-numbers-core = { module = "org.apache.commons:commons-numbers-core" } # version from BOM 'commons-numbers-bom'
 commons-numbers-fraction = { module = "org.apache.commons:commons-numbers-fraction" } # version from BOM 'commons-numbers-bom'
 guava = "com.google.guava:guava:33.8.0-jre"
-# Groovy: the oldest supported line (3.x, the last published as org.codehaus.groovy) and the newest. kotlin-tools compiles
-# its groovy-extensions core against the first and tests against both. Consumers bring their own Groovy, so neither is
-# constrained in the platform.
-groovy3 = "org.codehaus.groovy:groovy:3.0.25"
-groovy = "org.apache.groovy:groovy:6.0.0"
+# Groovy and groovy-sql: the oldest supported line (3.x, the last published as org.codehaus.groovy) and the newest.
+# kotlin-tools compiles its groovy-extensions and groovy-sql-extensions cores against the first and tests against both.
+# Consumers bring their own Groovy, so none is constrained in the platform. The groovy-sql entries make `libs.groovy` a
+# group accessor: it still works as a dependency, but a build needing it as a Provider looks it up by name.
+groovy3 = { module = "org.codehaus.groovy:groovy", version.ref = "groovy3" }
+groovy = { module = "org.apache.groovy:groovy", version.ref = "groovy" }
+groovy-sql3 = { module = "org.codehaus.groovy:groovy-sql", version.ref = "groovy3" }
+groovy-sql = { module = "org.apache.groovy:groovy-sql", version.ref = "groovy" }
 kotlinx-datetime = "org.jetbrains.kotlinx:kotlinx-datetime:0.8.0"
 snakeyaml-engine = "org.snakeyaml:snakeyaml-engine:3.2"
 artifactory-client-api = "org.jfrog.artifactory.client:artifactory-java-client-api:2.21.2"
