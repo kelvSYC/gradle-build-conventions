@@ -1,6 +1,6 @@
 # gradle-build-conventions
 
-Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin, Dokka and JaCoCo convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
+Shared Gradle build conventions (version catalog, platform BOM, settings plugin, publishing plugin, and Kotlin, Gradle-plugin, Dokka, JaCoCo and Kover convention plugins) consumed by the rifflet, kotlin-tools and gradle-tools repositories. Published to GitHub Packages under group `com.kelvsyc.internal`.
 
 ## Consumer usage
 
@@ -67,6 +67,7 @@ kelvsyc {
 | `com.kelvsyc.internal.kotlin-gradle-plugin` | `build.gradle.kts` | The same for Gradle plugins, with `kotlin-dsl` and `java-gradle-plugin` (which publishes the plugin and its markers) |
 | `com.kelvsyc.internal.dokka` | `build.gradle.kts` | Dokka HTML documentation built by `assemble`, linking the JDK, the Kotlin standard library and the sources on GitHub; a javadoc jar of the Dokka Javadoc output for `java` projects that are not Kotlin Multiplatform |
 | `com.kelvsyc.internal.jacoco` | `build.gradle.kts` | Gradle's `jacoco` plugin at the shared catalog's JaCoCo version, with XML and HTML reports on `jacocoTestReport` |
+| `com.kelvsyc.internal.kover` | `build.gradle.kts` | The Kover Gradle plugin at the shared catalog's Kover version, with `koverVerify` kept out of `check` |
 
 ### Kotlin compatibility floors
 
@@ -130,6 +131,10 @@ Dokka bundles Jackson, jsoup and FreeMarker at versions with known vulnerabiliti
 ### JaCoCo
 
 `com.kelvsyc.internal.jacoco` applies Gradle's `jacoco` plugin and sets its `toolVersion` to the shared catalog's `jacoco` version, fixed when the plugin is built. In a project with the `java` plugin, `jacocoTestReport` requires the XML and HTML reports and depends on `test`. Nothing else: no thresholds or verification, and `check` does not run the report.
+
+### Kover
+
+`com.kelvsyc.internal.kover` applies the Kover Gradle plugin at the shared catalog's `kover` version, fixed when the plugin is built, and sets `kover { reports { total { verify { onCheck = false } } } }`: by default Kover adds `koverVerify` and `koverCachedVerify` to `check`. Nothing else is configured: no rules or filters, and the report tasks (`koverHtmlReport`, `koverXmlReport`) are run on request. Kover measures common and JVM source sets only; JS and native sources are not covered, and a JS-only project gets empty reports.
 
 ## Keeping the pin up to date
 
