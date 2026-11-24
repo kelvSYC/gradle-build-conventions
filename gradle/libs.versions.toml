@@ -52,6 +52,11 @@ commons-numbers-complex = { module = "org.apache.commons:commons-numbers-complex
 commons-numbers-core = { module = "org.apache.commons:commons-numbers-core" } # version from BOM 'commons-numbers-bom'
 commons-numbers-fraction = { module = "org.apache.commons:commons-numbers-fraction" } # version from BOM 'commons-numbers-bom'
 guava = "com.google.guava:guava:33.8.0-jre"
+# Groovy: the oldest supported line (3.x, the last published as org.codehaus.groovy) and the newest. kotlin-tools compiles
+# its groovy-extensions core against the first and tests against both. Consumers bring their own Groovy, so neither is
+# constrained in the platform.
+groovy3 = "org.codehaus.groovy:groovy:3.0.25"
+groovy = "org.apache.groovy:groovy:6.0.0"
 kotlinx-datetime = "org.jetbrains.kotlinx:kotlinx-datetime:0.8.0"
 snakeyaml-engine = "org.snakeyaml:snakeyaml-engine:3.2"
 artifactory-client-api = "org.jfrog.artifactory.client:artifactory-java-client-api:2.21.2"
