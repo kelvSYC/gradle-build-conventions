@@ -630,8 +630,10 @@ class KotlinConventionPluginsTest {
         val tasks = buildTwice(dir, "tasks", "--all", "--info").output
         assertFalse(tasks.contains("checkKotlinAbi"), tasks)
         assertTrue(tasks.contains("ABI validation is skipped"), tasks)
-        buildTwice(dir, "check")
-        assertFalse(File(dir, "api").exists())
+        // A dry run: compiling native code would provision the Kotlin/Native toolchain on a fresh machine, and its
+        // platform libraries are configuration inputs, so the second build could not reuse the configuration cache.
+        val dryRun = buildTwice(dir, "check", "--dry-run").output
+        assertFalse(dryRun.contains("checkKotlinAbi"), dryRun)
     }
 
     @Test
