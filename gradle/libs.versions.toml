@@ -55,14 +55,21 @@ commons-numbers-complex = { module = "org.apache.commons:commons-numbers-complex
 commons-numbers-core = { module = "org.apache.commons:commons-numbers-core" } # version from BOM 'commons-numbers-bom'
 commons-numbers-fraction = { module = "org.apache.commons:commons-numbers-fraction" } # version from BOM 'commons-numbers-bom'
 guava = "com.google.guava:guava:33.8.0-jre"
-# Groovy and groovy-sql: the oldest supported line (3.x, the last published as org.codehaus.groovy) and the newest.
-# kotlin-tools compiles its groovy-extensions and groovy-sql-extensions cores against the first and tests against both.
+# Groovy and its modules: the oldest supported line (3.x, the last published as org.codehaus.groovy) and the newest.
+# kotlin-tools compiles its groovy-extensions and groovy-sql-extensions cores against the first and tests against both
+# (groovy-xml, groovy-json and groovy-ant only in tests, for its builder DSL).
 # Consumers bring their own Groovy, so none is constrained in the platform. The groovy-sql entries make `libs.groovy` a
 # group accessor: it still works as a dependency, but a build needing it as a Provider looks it up by name.
 groovy3 = { module = "org.codehaus.groovy:groovy", version.ref = "groovy3" }
 groovy = { module = "org.apache.groovy:groovy", version.ref = "groovy" }
 groovy-sql3 = { module = "org.codehaus.groovy:groovy-sql", version.ref = "groovy3" }
 groovy-sql = { module = "org.apache.groovy:groovy-sql", version.ref = "groovy" }
+groovy-xml3 = { module = "org.codehaus.groovy:groovy-xml", version.ref = "groovy3" }
+groovy-xml = { module = "org.apache.groovy:groovy-xml", version.ref = "groovy" }
+groovy-json3 = { module = "org.codehaus.groovy:groovy-json", version.ref = "groovy3" }
+groovy-json = { module = "org.apache.groovy:groovy-json", version.ref = "groovy" }
+groovy-ant3 = { module = "org.codehaus.groovy:groovy-ant", version.ref = "groovy3" }
+groovy-ant = { module = "org.apache.groovy:groovy-ant", version.ref = "groovy" }
 kotlinx-datetime = "org.jetbrains.kotlinx:kotlinx-datetime:0.8.0"
 snakeyaml-engine = "org.snakeyaml:snakeyaml-engine:3.2"
 artifactory-client-api = "org.jfrog.artifactory.client:artifactory-java-client-api:2.21.2"
