@@ -6,11 +6,13 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 
 /**
  * Kotlin Multiplatform convention for published libraries: applies [KotlinMultiplatformBasePlugin] and publishes a
- * sources jar with every target.
+ * sources jar with every target. With `com.kelvsyc.kotlin.abiValidation=true` it turns on ABI validation unless the
+ * project has a native target ([configureAbiValidation]).
  */
 class KotlinMultiplatformLibraryPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         project.pluginManager.apply(KotlinMultiplatformBasePlugin::class.java)
         project.extensions.getByType(KotlinMultiplatformExtension::class.java).withSourcesJar(publish = true)
+        project.configureAbiValidation()
     }
 }

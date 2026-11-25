@@ -462,6 +462,58 @@ class GradleConventionPluginsTest {
         assertEquals(TaskOutcome.SUCCESS, kinds.result.task(":plugin:validatePlugins")?.outcome)
     }
 
+    // ABI validation --------------------------------------------------------------------------------------------------
+
+    @Test
+    fun gradleKindsDumpAbi() {
+        val dir = fixture(
+            "abi",
+            buildScript = "",
+            settingsBody = """include("lib", "plugin")""",
+            gradleProperties = "$ABI_PROPERTY=true\n",
+            files = mapOf(
+                "lib/build.gradle.kts" to """
+                    |plugins {
+                    |    id("com.kelvsyc.internal.kotlin-gradle-library")
+                    |}
+                """.trimMargin(),
+                "lib/src/main/kotlin/com/example/Greeter.kt" to
+                    "package com.example\n\nclass Greeter {\n    fun greet(): String = \"hello\"\n}\n",
+                "plugin/build.gradle.kts" to """
+                    |plugins {
+                    |    id("com.kelvsyc.internal.kotlin-gradle-plugin")
+                    |}
+                    |
+                    |gradlePlugin {
+                    |    plugins.create("greet") {
+                    |        id = "com.example.greet"
+                    |        implementationClass = "com.example.GreetPlugin"
+                    |    }
+                    |}
+                """.trimMargin(),
+                "plugin/src/main/kotlin/com/example/GreetPlugin.kt" to """
+                    |package com.example
+                    |
+                    |import org.gradle.api.Plugin
+                    |import org.gradle.api.Project
+                    |
+                    |class GreetPlugin : Plugin<Project> {
+                    |    override fun apply(project: Project) = Unit
+                    |}
+                """.trimMargin(),
+            ),
+        )
+        buildTwice(dir, ":lib:updateKotlinAbi", ":plugin:updateKotlinAbi")
+        val lib = File(dir, "lib/api/lib.api").readText()
+        assertTrue(lib.contains("Greeter"), lib)
+        val plugin = File(dir, "plugin/api/plugin.api").readText()
+        assertTrue(plugin.contains("GreetPlugin"), plugin)
+        buildTwice(dir, ":lib:checkKotlinAbi", ":plugin:checkKotlinAbi")
+        val dryRun = buildTwice(dir, "check", "--dry-run").output
+        assertTrue(dryRun.contains(":lib:checkKotlinAbi"), dryRun)
+        assertTrue(dryRun.contains(":plugin:checkKotlinAbi"), dryRun)
+    }
+
     // Helpers ---------------------------------------------------------------------------------------------------------
 
     private class Fixture(val dir: File, val result: BuildResult)
@@ -475,12 +527,13 @@ class GradleConventionPluginsTest {
         buildScript: String,
         settingsBody: String = "",
         files: Map<String, String> = emptyMap(),
+        gradleProperties: String = "",
     ): File {
         val dir = File(root, name).apply { mkdirs() }
         File(dir, "settings.gradle.kts").writeText(settingsScript(name, settingsBody))
         File(dir, "build.gradle.kts").writeText(buildScript)
         File(dir, "gradle.properties").writeText(
-            "org.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=768m\norg.gradle.java.home=$fixtureDaemonJdk\n",
+            "org.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=768m\norg.gradle.java.home=$fixtureDaemonJdk\n$gradleProperties",
         )
         files.forEach { (path, content) -> File(dir, path).apply { parentFile.mkdirs() }.writeText(content) }
         File(dir, ".gitignore").writeText(".gradle/\n.kotlin/\nbuild/\n")
@@ -561,6 +614,8 @@ class GradleConventionPluginsTest {
 
     private companion object {
         const val TIER_PROPERTY = "com.kelvsyc.gradle.minimumGradle"
+
+        const val ABI_PROPERTY = "com.kelvsyc.kotlin.abiValidation"
 
         const val MOCKK_VERSION = "1.14.12"
 
