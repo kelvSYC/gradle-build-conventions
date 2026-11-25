@@ -19,8 +19,9 @@ const val ABI_VALIDATION_PROPERTY: String = "com.kelvsyc.kotlin.abiValidation"
  *
  * Native modules are skipped because the native convention declares only the build host's target, so the klib dump,
  * which records its targets, would differ between hosts. The decision is made after evaluation, so native targets
- * added after the library plugin (by the native plugin or the build script) are seen; the Kotlin plugin only decides
- * whether to create its ABI tasks at its `ReadyForExecution` stage, which comes later.
+ * added after the library plugin (by the native plugin or the build script) are seen. That is early enough: the Kotlin
+ * plugin registers the ABI tasks when `abiValidation()` is called, and it wires `checkKotlinAbi` into `check` and
+ * finalises the dump inputs only at its `ReadyForExecution` stage, which comes later.
  */
 fun Project.configureAbiValidation() {
     when (val value = providers.gradleProperty(ABI_VALIDATION_PROPERTY).orNull) {
