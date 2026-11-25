@@ -532,6 +532,112 @@ class KotlinConventionPluginsTest {
         assertTrue(output.contains("multiplatform=true\n"), output)
     }
 
+    // ABI validation --------------------------------------------------------------------------------------------------
+
+    /** A fixture of one project applying [plugins] (lines of a `plugins` block, versionless), with [ABI_SOURCE]. */
+    private fun abiFixture(name: String, plugins: List<String>, sourceSet: String, property: String?): File {
+        val pluginLines = plugins.joinToString("\n") { "    id(\"$it\") version \"$conventionsVersion\"" }
+        return fixture(
+            name,
+            buildScript = "plugins {\n$pluginLines\n}\n",
+            files = mapOf("src/$sourceSet/kotlin/com/example/Api.kt" to ABI_SOURCE),
+            gradleProperties = property?.let { "$ABI_PROPERTY=$it\n" }.orEmpty(),
+        )
+    }
+
+    @Test
+    fun abiValidationOffByDefault() {
+        val dir = abiFixture("abi-absent", listOf("com.kelvsyc.internal.kotlin-jvm-library"), "main", null)
+        val tasks = buildTwice(dir, "tasks", "--all").output
+        assertFalse(tasks.contains("checkKotlinAbi"), tasks)
+        buildTwice(dir, "check")
+    }
+
+    @Test
+    fun abiValidationOffWhenFalse() {
+        val dir = abiFixture("abi-false", listOf("com.kelvsyc.internal.kotlin-jvm-library"), "main", "false")
+        val tasks = buildTwice(dir, "tasks", "--all").output
+        assertFalse(tasks.contains("checkKotlinAbi"), tasks)
+        buildTwice(dir, "check")
+    }
+
+    @Test
+    fun abiValidationInvalidValueFails() {
+        val dir = abiFixture("abi-invalid", listOf("com.kelvsyc.internal.kotlin-jvm-library"), "main", "yes")
+        val output = failTwice(dir, "help").output
+        assertTrue(output.contains("yes is not a supported value for $ABI_PROPERTY; use true or false"), output)
+    }
+
+    @Test
+    fun abiValidationLifecycleOnJvmLibrary() {
+        val dir = abiFixture("abi-jvm", listOf("com.kelvsyc.internal.kotlin-jvm-library"), "main", "true")
+        val missing = failTwice(dir, "check").output
+        assertTrue(missing.contains("Expected file with ABI declarations"), missing)
+        assertTrue(missing.contains("updateKotlinAbi"), missing)
+
+        buildTwice(dir, "updateKotlinAbi")
+        val dump = File(dir, "api/abi-jvm.api").readText()
+        assertTrue(dump.contains("answer"), dump)
+        assertTrue(dump.contains("published"), dump)
+        assertFalse(dump.contains("hidden"), dump)
+        buildTwice(dir, "check")
+
+        val source = File(dir, "src/main/kotlin/com/example/Api.kt")
+        source.writeText(ABI_SOURCE.replace("hidden(): Int = 1", "hidden(): Int = 3"))
+        buildTwice(dir, "check")
+
+        source.writeText(ABI_SOURCE + "\nfun extra(): Int = 0\n")
+        val changed = failTwice(dir, "check").output
+        assertTrue(changed.contains("ABI has changed"), changed)
+        assertTrue(changed.contains("extra"), changed)
+    }
+
+    @Test
+    fun abiValidationDumpsJvmAndKlibOnMultiplatform() {
+        val dir = abiFixture(
+            "abi-kmp",
+            listOf(
+                "com.kelvsyc.internal.kotlin-multiplatform-library",
+                "com.kelvsyc.internal.kotlin-multiplatform-jvm",
+                "com.kelvsyc.internal.kotlin-multiplatform-js",
+            ),
+            "commonMain",
+            "true",
+        )
+        buildTwice(dir, "updateKotlinAbi")
+        assertTrue(File(dir, "api/abi-kmp.api").isFile)
+        val klib = File(dir, "api/abi-kmp.klib.api").readText()
+        assertTrue(klib.contains("answer"), klib)
+        buildTwice(dir, "checkKotlinAbi")
+    }
+
+    @Test
+    fun abiValidationSkippedWithNativeTarget() {
+        // The library plugin comes first, as in kotlin-tools' kotlin-core: the native target is added after it.
+        val dir = abiFixture(
+            "abi-native",
+            listOf(
+                "com.kelvsyc.internal.kotlin-multiplatform-library",
+                "com.kelvsyc.internal.kotlin-multiplatform-jvm",
+                "com.kelvsyc.internal.kotlin-multiplatform-native",
+            ),
+            "commonMain",
+            "true",
+        )
+        val tasks = buildTwice(dir, "tasks", "--all", "--info").output
+        assertFalse(tasks.contains("checkKotlinAbi"), tasks)
+        assertTrue(tasks.contains("ABI validation is skipped"), tasks)
+        buildTwice(dir, "check")
+        assertFalse(File(dir, "api").exists())
+    }
+
+    @Test
+    fun abiValidationNotAppliedByTargetPlugins() {
+        val dir = abiFixture("abi-target", listOf("com.kelvsyc.internal.kotlin-multiplatform-jvm"), "commonMain", "true")
+        val tasks = buildTwice(dir, "tasks", "--all").output
+        assertFalse(tasks.contains("checkKotlinAbi"), tasks)
+    }
+
     // Helpers ---------------------------------------------------------------------------------------------------------
 
     private class Fixture(val dir: File, val result: BuildResult)
@@ -548,6 +654,7 @@ class KotlinConventionPluginsTest {
         pluginRepositories: String = MAVEN_LOCAL_CONVENTIONS,
         files: Map<String, String> = emptyMap(),
         git: Boolean = false,
+        gradleProperties: String = "",
     ): File {
         val dir = File(root, name).apply { mkdirs() }
         File(dir, "settings.gradle.kts").writeText(
@@ -575,7 +682,7 @@ class KotlinConventionPluginsTest {
             """.trimMargin(),
         )
         File(dir, "build.gradle.kts").writeText(buildScript)
-        File(dir, "gradle.properties").writeText("org.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=768m\n")
+        File(dir, "gradle.properties").writeText("org.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=768m\n$gradleProperties")
         files.forEach { (path, content) -> File(dir, path).apply { parentFile.mkdirs() }.writeText(content) }
         File(dir, ".gitignore").writeText(".gradle/\n.kotlin/\nbuild/\n")
         if (git) {
@@ -668,6 +775,19 @@ class KotlinConventionPluginsTest {
         const val OLDER_KOTLIN = "2.4.10"
 
         const val CONFIGURATION_CACHE_REUSED = "Configuration cache entry reused."
+
+        const val ABI_PROPERTY = "com.kelvsyc.kotlin.abiValidation"
+
+        /** Public, internal and `@PublishedApi internal` declarations, for the ABI validation fixtures. */
+        const val ABI_SOURCE = """package com.example
+
+fun answer(): Int = 42
+
+internal fun hidden(): Int = 1
+
+@PublishedApi
+internal fun published(): Int = 2
+"""
 
         /** Class file major version of Java 17. */
         const val JAVA_17_CLASS_MAJOR_VERSION = 61

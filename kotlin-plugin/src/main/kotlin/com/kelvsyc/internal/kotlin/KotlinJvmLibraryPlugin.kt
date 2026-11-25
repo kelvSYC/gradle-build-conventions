@@ -15,7 +15,8 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
  *
  * The published `org.gradle.jvm.version` follows the Java compile tasks' release. It publishes a sources jar,
  * `implementation` gets the shared platform, tests get Kotest on the JUnit Platform, and with `maven-publish` applied
- * (before or after this plugin) it registers a `maven` publication of the `java` component.
+ * (before or after this plugin) it registers a `maven` publication of the `java` component. With
+ * `com.kelvsyc.kotlin.abiValidation=true` it turns on ABI validation ([configureAbiValidation]).
  */
 class KotlinJvmLibraryPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -25,6 +26,7 @@ class KotlinJvmLibraryPlugin : Plugin<Project> {
 
         project.checkKotlinPluginVersion()
         project.checkKotlinToolchainAlignment()
+        project.configureAbiValidation()
 
         val conventions = KelvsycKotlinExtension.of(project)
         val kotlin = project.extensions.getByType(KotlinJvmProjectExtension::class.java)
