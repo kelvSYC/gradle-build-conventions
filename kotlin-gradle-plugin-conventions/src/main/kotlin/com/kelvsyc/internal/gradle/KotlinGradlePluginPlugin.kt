@@ -1,5 +1,6 @@
 package com.kelvsyc.internal.gradle
 
+import com.kelvsyc.internal.kotlin.configureAbiValidation
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.FileCollectionDependency
@@ -13,7 +14,8 @@ import org.gradle.kotlin.dsl.gradleKotlinDsl
  * `kotlin-dsl` and `java-gradle-plugin` add the running Gradle's API as file dependencies, and `kotlin-dsl` adds its
  * embedded Kotlin; `main`'s compile classpath drops both, so that it compiles against the tier's Gradle API and Kotlin
  * only. Unit tests compile and run against the Gradle running the build. `java-gradle-plugin` publishes the plugin
- * (`pluginMaven` and a marker per plugin).
+ * (`pluginMaven` and a marker per plugin). With `com.kelvsyc.kotlin.abiValidation=true` it turns on ABI validation
+ * ([configureAbiValidation]).
  */
 class KotlinGradlePluginPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -28,6 +30,7 @@ class KotlinGradlePluginPlugin : Plugin<Project> {
         }
 
         project.configureGradleKind()
+        project.configureAbiValidation()
 
         val dependencies = project.dependencies
         dependencies.add("testImplementation", dependencies.gradleApi())

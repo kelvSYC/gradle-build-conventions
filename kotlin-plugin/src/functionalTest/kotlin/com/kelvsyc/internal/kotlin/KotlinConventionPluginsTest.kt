@@ -571,25 +571,28 @@ class KotlinConventionPluginsTest {
     @Test
     fun abiValidationLifecycleOnJvmLibrary() {
         val dir = abiFixture("abi-jvm", listOf("com.kelvsyc.internal.kotlin-jvm-library"), "main", "true")
-        val missing = failTwice(dir, "check").output
+        val missing = failTwice(dir, "check", NO_WATCH_FS).output
         assertTrue(missing.contains("Expected file with ABI declarations"), missing)
         assertTrue(missing.contains("updateKotlinAbi"), missing)
 
-        buildTwice(dir, "updateKotlinAbi")
+        buildTwice(dir, "updateKotlinAbi", NO_WATCH_FS)
         val dump = File(dir, "api/abi-jvm.api").readText()
         assertTrue(dump.contains("answer"), dump)
         assertTrue(dump.contains("published"), dump)
         assertFalse(dump.contains("hidden"), dump)
-        buildTwice(dir, "check")
+        buildTwice(dir, "check", NO_WATCH_FS)
 
+        // Each edit must be compiled, so that a passing check is not just a stale build.
         val source = File(dir, "src/main/kotlin/com/example/Api.kt")
         source.writeText(ABI_SOURCE.replace("hidden(): Int = 1", "hidden(): Int = 3"))
-        buildTwice(dir, "check")
+        val internalChange = buildTwice(dir, "check", NO_WATCH_FS)
+        assertEquals(TaskOutcome.SUCCESS, internalChange.task(":compileKotlin")?.outcome, internalChange.output)
 
         source.writeText(ABI_SOURCE + "\nfun extra(): Int = 0\n")
-        val changed = failTwice(dir, "check").output
-        assertTrue(changed.contains("ABI has changed"), changed)
-        assertTrue(changed.contains("extra"), changed)
+        val changed = failTwice(dir, "check", NO_WATCH_FS)
+        assertEquals(TaskOutcome.SUCCESS, changed.task(":compileKotlin")?.outcome, changed.output)
+        assertTrue(changed.output.contains("ABI has changed"), changed.output)
+        assertTrue(changed.output.contains("extra"), changed.output)
     }
 
     @Test
@@ -777,6 +780,12 @@ class KotlinConventionPluginsTest {
         const val CONFIGURATION_CACHE_REUSED = "Configuration cache entry reused."
 
         const val ABI_PROPERTY = "com.kelvsyc.kotlin.abiValidation"
+
+        /**
+         * For builds that follow an edit of the fixture's sources: with file system watching, a loaded machine can start
+         * the build before the daemon sees the edit, and the build then runs on the old sources.
+         */
+        const val NO_WATCH_FS = "--no-watch-fs"
 
         /** Public, internal and `@PublishedApi internal` declarations, for the ABI validation fixtures. */
         const val ABI_SOURCE = """package com.example

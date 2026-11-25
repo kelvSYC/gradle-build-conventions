@@ -1,5 +1,6 @@
 package com.kelvsyc.internal.gradle
 
+import com.kelvsyc.internal.kotlin.configureAbiValidation
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.publish.PublishingExtension
@@ -14,7 +15,7 @@ import org.gradle.kotlin.dsl.gradleKotlinDsl
  * Gradle, which supplies it, and a published version would conflict with the Kotlin DSL plugins of older Gradle
  * releases, which pin it strictly to their embedded Kotlin. Unit tests compile and run against the Gradle running the
  * build. With `maven-publish` applied (before or after this plugin) it registers a `maven` publication of the `java`
- * component.
+ * component. With `com.kelvsyc.kotlin.abiValidation=true` it turns on ABI validation ([configureAbiValidation]).
  */
 class KotlinGradleLibraryPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -24,6 +25,7 @@ class KotlinGradleLibraryPlugin : Plugin<Project> {
         project.pluginManager.apply("org.jetbrains.kotlin.jvm")
 
         project.configureGradleKind()
+        project.configureAbiValidation()
 
         val dependencies = project.dependencies
         dependencies.add("testCompileOnly", dependencies.gradleApi())
